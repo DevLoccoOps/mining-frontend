@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="MineTrack — Personnel Tracking">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="minetrack">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>minetrack</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!--
+    Prevent canvaskit from loading from external CDN (gstatic.com).
+    Two interception layers:
+      1) Fetch interceptor — catches any stray fetch() to gstatic CDN (backup)
+      2) Loader patch — sets canvasKitBaseUrl='/canvaskit/' so import() uses local files
+  -->
+  <script>
+    (function() {
+
+      // === SERVICE WORKER + CACHE CLEANUP ===
+      // Flutter's service worker caches main.dart.js and other assets. After a
+      // new deploy, old SWs keep serving stale cached code until Chrome is fully
+      // closed. To fix this we:
+      //   1. Clear all CacheStorage entries (left over from old SWs).
+      //   2. Unregister every service worker.
+      //   3. If a SW was controlling this page load, reload once so assets are
+      //      fetched fresh from the network (nginx already sets no-cache for
+      //      index.html and must-revalidate for static assets).
+      //   4. Strip serviceWorkerSettings below so Flutter never registers a new
+      //      SW (the app requires network connectivity, so offline cache is
+      //      unnecessary and causes stale-content bugs).
+      // A sessionStorage flag prevents a reload loop.
+      if ('serviceWorker' in navigator) {
+        var _SW_BUST_FLAG = '_sw_cache_busted';
+        if (sessionStorage.getItem(_SW_BUST_FLAG) === '1') {
+          // We just reloaded after busting — don't loop.
+          sessionStorage.removeItem(_SW_BUST_FLAG);
+        } else {
+          var _hadSwController = !!navigator.serviceWorker.controller;
+          var _cleanupPromises = [];
+          if ('caches' in window) {
+            _cleanupPromises.push(
+              caches.keys().then(function(keys) {
+                return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+              })
+            );
+          }
+          _cleanupPromises.push(
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              return Promise.all(regs.map(function(r) {
+                console.log('[sw-cleanup] Unregistering SW:', r.scope);
+                return r.unregister();
+              }));
+            })
+          );
+          Promise.all(_cleanupPromises).then(function() {
+            if (_hadSwController) {
+              console.log('[sw-cleanup] SW was controlling page — reloading for fresh assets');
+              sessionStorage.setItem(_SW_BUST_FLAG, '1');
+              window.location.reload();
+            }
+          });
+        }
+      }
+
+      // === LAYER 1: Global fetch interceptor (backup) ===
+      // Catches fetch() calls to gstatic.com and redirects them to local paths:
+      //   - gstatic.com/flutter-canvaskit/* -> /canvaskit/<file>
+      // (Font fallback requests are left alone: the main UI font "Inter" is
+      //  bundled as an asset and registered via pubspec, so all regular text
+      //  renders without any network access. Rare symbol/emoji fallbacks fetch
+      //  from gstatic when online and simply skip when offline.)
+      var origFetch = window.fetch;
+      if (origFetch) {
+        window.fetch = function() {
+          var url = arguments[0];
+          if (typeof url === 'string') {
+            if (url.indexOf('gstatic.com/flutter-canvaskit') !== -1) {
+              var path = url.split('/').pop();
+              console.log('[canvasKit] Redirecting CDN fetch to local:', path);
+              return origFetch.call(window, '/canvaskit/' + path);
+            }
+          }
+          return origFetch.apply(window, arguments);
+        };
+      }
+
+      // === LAYER 2: Patch _flutter.loader.load to inject canvasKitBaseUrl ===
+      // The _flutter object is built incrementally by flutter.js:
+      //   1. window._flutter = {}             → triggers our window._flutter setter
+      //   2. window._flutter.loader = new b   → triggers our 'loader' setter (on the object)
+      //   3. _flutter.loader.load({...})      → calls the patched load with canvasKitBaseUrl set
+      // We define a getter/setter for 'loader' ON the _flutter object so that when
+      // .loader is assigned, we wrap its .load method to inject canvasKitBaseUrl.
+      // This makes import('canvaskit.js') resolve to /canvaskit/canvaskit.js (local).
+      var _flutterRef;
+      Object.defineProperty(window, '_flutter', {
+        set: function(val) {
+          _flutterRef = val;
+          var _loaderRef;
+          Object.defineProperty(_flutterRef, 'loader', {
+            set: function(l) {
+              _loaderRef = l;
+              if (l && typeof l.load === 'function') {
+                var origLoad = l.load.bind(l);
+                l.load = function(cfg) {
+                  cfg = cfg || {};
+                  // Disable Flutter's service worker so it never re-registers
+                  // and re-caches stale assets. We clean up old SWs above.
+                  cfg.serviceWorkerSettings = null;
+                  cfg.config = cfg.config || {};
+                  if (cfg.config.canvasKitBaseUrl !== '/canvaskit/') {
+                    cfg.config.canvasKitBaseUrl = '/canvaskit/';
+                  }
+                  // Serve fallback fonts (Noto Sans Symbols, etc.) locally so the
+                  // app is fully offline (no fonts.gstatic.com requests).
+                  if (cfg.config.fontFallbackBaseUrl !== '/fonts/') {
+                    cfg.config.fontFallbackBaseUrl = '/fonts/';
+                  }
+                  console.log('[canvasKit] load() called, canvasKitBaseUrl =', cfg.config.canvasKitBaseUrl, 'fontFallbackBaseUrl =', cfg.config.fontFallbackBaseUrl);
+                  return origLoad(cfg);
+                };
+                console.log('[canvasKit] Patched _flutter.loader.load');
+              }
+            },
+            get: function() { return _loaderRef; },
+            configurable: true,
+            enumerable: true
+          });
+        },
+        get: function() { return _flutterRef; },
+        configurable: true
+      });
+
+    })();
+  </script>
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
