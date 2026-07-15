@@ -31,7 +31,7 @@ class AdminPage extends StatelessWidget {
             builder: (context, c) {
               final cols = c.maxWidth > 1280 ? 3 : c.maxWidth > 760 ? 2 : 1;
               const spacing = 16.0;
-              final cards = sections.map((s) => _sectionCard(s, t)).toList();
+              final cards = sections.map((s) => _sectionCard(s, t, context)).toList();
               final List<Widget> rows = [];
               for (var i = 0; i < cards.length; i += cols) {
                 final rowChildren = <Widget>[];
@@ -100,42 +100,115 @@ class AdminPage extends StatelessWidget {
     );
   }
 
-  Widget _sectionCard((IconData, String, String, List<String>) s, SurfaceTokens t) {
+  Widget _sectionCard((IconData, String, String, List<String>) s, SurfaceTokens t, BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: ExpansionTile(
+          initiallyExpanded: true,
+          tilePadding: const EdgeInsets.all(20),
+          childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          iconColor: t.muted,
+          collapsedIconColor: t.muted,
+          leading: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
+            child: Icon(s.$1, size: 18, color: AppColors.blue),
+          ),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
-                child: Icon(s.$1, size: 18, color: AppColors.blue),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(s.$2, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
-                    const SizedBox(height: 2),
-                    Text(s.$3, style: TextStyle(fontSize: 11, color: t.muted)),
-                  ],
-                ),
-              ),
+              Text(s.$2, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg, fontFamily: 'Inter')),
+              const SizedBox(height: 2),
+              Text(s.$3, style: TextStyle(fontSize: 11, color: t.muted, fontFamily: 'Inter')),
             ],
           ),
-          const SizedBox(height: 12),
-          ...s.$4.map((item) => ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                title: Text(item, style: TextStyle(fontSize: 13, color: t.fg)),
-                trailing: const Icon(Icons.chevron_right, size: 13),
-                onTap: () {},
-              )),
-        ],
+          children: s.$4
+              .map((item) => ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    title: Text(item, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
+                    trailing: const Icon(Icons.chevron_right, size: 14, color: Color(0xFF94A3B8)),
+                    onTap: () => _openSectionItem(s.$2, item, t, context),
+                  ))
+              .toList(),
+        ),
+      ),
+    );
+  }
+
+  void _openSectionItem(String section, String item, SurfaceTokens t, BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: t.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.folder_open, size: 18, color: AppColors.blue),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: t.fg, fontFamily: 'Inter')),
+                          Text(section, style: TextStyle(fontSize: 12, color: t.muted, fontFamily: 'Inter')),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () => Navigator.pop(context),
+                      splashRadius: 16,
+                    ),
+                  ],
+                ),
+                const Divider(height: 24),
+                Text('This module is part of "$section" administration.',
+                    style: TextStyle(fontSize: 13, color: t.muted, fontFamily: 'Inter')),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: t.mutedBg, borderRadius: BorderRadius.circular(12)),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 16, color: AppColors.blue),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text('$item management is configured here. Connect a backend to populate this panel with live records.',
+                            style: TextStyle(fontSize: 12, color: t.muted, fontFamily: 'Inter', height: 1.4)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

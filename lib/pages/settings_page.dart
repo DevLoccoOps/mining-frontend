@@ -233,10 +233,17 @@ class _SettingsPageState extends State<SettingsPage> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton(
+        child: DropdownButton<String>(
           value: items.first,
-          items: items.map((s) => DropdownMenuItem(value: s, child: Text(s, style: TextStyle(fontSize: 13, color: t.fg)))).toList(),
+          dropdownColor: t.card,
+          items: items
+              .map((s) => DropdownMenuItem(
+                    value: s,
+                    child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
+                  ))
+              .toList(),
           onChanged: (_) {},
+          style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
           icon: Icon(Icons.expand_more, size: 16, color: t.muted),
         ),
       ),

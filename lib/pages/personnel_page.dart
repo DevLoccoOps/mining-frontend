@@ -133,9 +133,21 @@ class _PersonnelPageState extends State<PersonnelPage> {
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: value,
-          items: items.map((d) => DropdownMenuItem(value: d, child: Text(d, style: TextStyle(fontSize: 13, color: t.fg)))).toList(),
+          dropdownColor: t.card,
+          items: items
+              .map((d) => DropdownMenuItem(
+                    value: d,
+                    child: Text(d, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
+                  ))
+              .toList(),
           onChanged: (v) => onChg(v!),
-          style: TextStyle(fontSize: 13, color: t.fg),
+          style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A), fontFamily: 'Inter'),
+          selectedItemBuilder: (context) => items
+              .map((d) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(d, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
+                  ))
+              .toList(),
           icon: Icon(Icons.expand_more, size: 16, color: t.muted),
         ),
       ),
@@ -352,9 +364,19 @@ class _RegisterDialogState extends State<_RegisterDialog> {
             children: [
               Text('Shift', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
               const SizedBox(height: 6),
-              DropdownButtonFormField(
-                decoration: const InputDecoration(isDense: true),
-                items: ['Day Shift', 'Night Shift', 'Rotating'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              DropdownButtonFormField<String>(
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: true,
+                  fillColor: t.mutedBg,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
+                ),
+                dropdownColor: t.card,
+                style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
+                items: ['Day Shift', 'Night Shift', 'Rotating']
+                    .map((s) => DropdownMenuItem(value: s, child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'))))
+                    .toList(),
                 onChanged: (_) {},
               ),
             ],
@@ -367,9 +389,19 @@ class _RegisterDialogState extends State<_RegisterDialog> {
             children: [
               Text('PPE Size', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
               const SizedBox(height: 6),
-              DropdownButtonFormField(
-                decoration: const InputDecoration(isDense: true),
-                items: ['Small', 'Medium', 'Large', 'XL'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              DropdownButtonFormField<String>(
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: true,
+                  fillColor: t.mutedBg,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
+                ),
+                dropdownColor: t.card,
+                style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
+                items: ['Small', 'Medium', 'Large', 'XL']
+                    .map((s) => DropdownMenuItem(value: s, child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'))))
+                    .toList(),
                 onChanged: (_) {},
               ),
             ],

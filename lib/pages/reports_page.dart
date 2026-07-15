@@ -91,16 +91,13 @@ class _ReportsPageState extends State<ReportsPage> {
           ),
           const SizedBox(height: 20),
           // Charts — responsive rows; cards size to content (page scrolls).
+          // The chart set changes with the selected report category so clicking
+          // a tab visibly updates the graphs.
           LayoutBuilder(
             builder: (context, c) {
               final cols = c.maxWidth > 1024 ? 2 : 1;
               const spacing = 20.0;
-              final cards = [
-                _card('Personnel Underground — Today', const PersonnelAreaChart()),
-                _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-                _batteryCard(t),
-                _card('Signal Strength Trend', const SignalLineChart()),
-              ];
+              final cards = _chartsFor(t);
               final List<Widget> rows = [];
               for (var i = 0; i < cards.length; i += cols) {
                 final rowChildren = <Widget>[];
@@ -159,6 +156,76 @@ class _ReportsPageState extends State<ReportsPage> {
         ],
       ),
     );
+  }
+
+  /// Returns a distinct set of chart cards for the currently selected report
+  /// category, so clicking a tab visibly changes the graphs.
+  List<Widget> _chartsFor(SurfaceTokens t) {
+    switch (_active) {
+      case 'daily':
+        return [
+          _card('Personnel Underground — Today', const PersonnelAreaChart()),
+          _card('Avg Signal Strength', const SignalAreaChart()),
+          _card('Worker Distribution', const WorkerDistributionBar()),
+          _batteryCard(t),
+        ];
+      case 'shift':
+        return [
+          _card('Personnel On Shift', const PersonnelAreaChart(green: true)),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+          _card('Signal Strength Trend', const SignalLineChart()),
+          _batteryCard(t),
+        ];
+      case 'attendance':
+        return [
+          _card('Headcount by Zone', const WorkerDistributionBar()),
+          _card('Attendance Over Day', const PersonnelAreaChart()),
+          _card('Avg Signal Strength', const SignalAreaChart()),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+        ];
+      case 'movement':
+        return [
+          _card('Movement / Signal Trend', const SignalLineChart()),
+          _card('Movements by Zone', const WorkerDistributionBar()),
+          _card('Personnel Underground', const PersonnelAreaChart()),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+        ];
+      case 'tag':
+        return [
+          _batteryCard(t),
+          _card('Tag Signal Strength', const SignalAreaChart()),
+          _card('Tags by Zone', const WorkerDistributionBar()),
+          _card('Active Tags', const PersonnelAreaChart(green: true)),
+        ];
+      case 'gateway':
+        return [
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+          _card('Signal Strength Trend', const SignalLineChart()),
+          _card('Avg Signal Strength', const SignalAreaChart()),
+          _card('Worker Distribution', const WorkerDistributionBar()),
+        ];
+      case 'battery':
+        return [
+          _batteryCard(t),
+          _card('Signal vs Battery', const SignalAreaChart()),
+          _card('Personnel Underground', const PersonnelAreaChart()),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+        ];
+      case 'evacuation':
+        return [
+          _card('Personnel Evacuated', const PersonnelAreaChart(green: true)),
+          _card('Personnel by Zone', const WorkerDistributionBar()),
+          _card('Signal Coverage', const SignalAreaChart()),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+        ];
+      default:
+        return [
+          _card('Personnel Underground — Today', const PersonnelAreaChart()),
+          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
+          _batteryCard(t),
+          _card('Signal Strength Trend', const SignalLineChart()),
+        ];
+    }
   }
 
   Widget _card(String title, Widget chart) {
