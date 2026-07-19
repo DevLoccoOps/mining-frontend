@@ -45,7 +45,8 @@ class KpiCard extends StatelessWidget {
             child: Icon(icon, size: 18, color: _iconFg[color]!),
           ),
           const SizedBox(width: 12),
-          Expanded(
+          Flexible(
+            fit: FlexFit.loose,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -56,17 +57,15 @@ class KpiCard extends StatelessWidget {
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: t.muted),
                 ),
                 const SizedBox(height: 2),
-                Flexible(
-                  child: Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: t.fg,
-                      height: 1.1,
-                    ),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: t.fg,
+                    height: 1.1,
                   ),
                 ),
                 if (sub != null) ...[
