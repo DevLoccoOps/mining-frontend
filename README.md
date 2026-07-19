@@ -575,7 +575,347 @@ Rebuild with `--no-tree-shake-icons`.
 
 ---
 
-## License & credits
+# Backend Architecture — MineTrack Full System
+
+## System Overview
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Frontend** | Flutter Web (SDK ^3.11) | Live tracking dashboard, personnel management, reports |
+| **MQTT Broker** | RabbitMQ with EMQX plugin / Railway managed | Receives BLE detection events from KNOT devices |
+| **Ingestion Module** | Spring Boot 3.2 + Apache Camel | Consumes MQTT, processes BLE detections, computes positions |
+| **Tracking Module** | Spring Boot 3.2 + PostgreSQL | Worker positions, movement history, zone management, SSE streaming |
+| **Alert Module** | Spring Boot 3.2 + PostgreSQL | Alert lifecycle, geofence violations, SOS triggers |
+| **Admin Module** | Spring Boot 3.2 + Keycloak | User management, BLE devices, reports, OAuth2 JWT validation |
+| **Simulator** | Spring Boot 3.2 + Paho MQTT | Simulates KNOT BLE detections and gateway health for demos |
+| **Identity** | Keycloak (Docker) | OAuth2 / OIDC with PKCE, realm roles, user management |
+| **Hosting** | Railway.app | Single Docker container + PostgreSQL + RabbitMQ + Keycloak |
+
+### Architecture Diagram
+
+```
+┌─────────────────┐     MQTT              ┌──────────────────┐
+│ MikroTik KNOT   │ ───────────────────>  │  Ingestion       │
+│ (BLE scanner +  │                       │  Module          │
+│  BEAM mesh)     │                       │  (Camel + MQTT)  │
+└─────────────────┘                       └───────┬──────────┘
+                                                  │ Direct calls
+                                    ┌─────────────▼─────────────┐
+                                    │        Tracking Module     │
+                                    │  (positions + SSE stream)  │
+                                    └─────────────┬─────────────┘
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │         Alert Module       │
+                                    │  (alerts + geofence)       │
+                                    └─────────────┬─────────────┘
+                                                  │
+                                   HTTP + SSE     │     JWT      ┌──────────┐
+                                ┌─────────────────▼─────────────▼┐         │
+                                │     Flutter Web Dashboard       │<--------│ Keycloak│
+                                └────────────────────────────────┘         └─────────┘
+
+                                  PostgreSQL (Railway)
+                                  RabbitMQ/MQTT (Railway)
+                                  KNOT Simulator (Docker, demo only)
+```
+
+---
+
+## Modules (Separation of Concerns)
+
+Each module is a separate Maven package within a single Spring Boot application, deployed as one Docker container on Railway.
+
+### 1. Ingestion Module
+
+**Why separate**: Decouples high-throughput MQTT data collection from business logic. Uses Apache Camel for complex routing patterns.
+
+| Responsibility | Detail |
+|---------------|--------|
+| MQTT consumer | Subscribes to `minetrack/ble/detections` and `minetrack/gateways/{id}/status` |
+| BLE parsing | Extracts MAC, RSSI, battery level, tag ID from KNOT JSON events |
+| Nearest gateway | Aggregates RSSI across multiple KNOTs detecting same tag, selects strongest |
+| Gateway health | Processes CPU, temperature, UPS, battery health telemetry from KNOTs |
+| Deduplication | Ignores duplicate detections within 10-second time window |
+
+### 2. Tracking Module (Core — Demo Star)
+
+**Why separate**: High-frequency position updates need optimized read/write paths. SSE streaming and geofence logic are independent from alert handling.
+
+| Responsibility | REST Endpoint | Detail |
+|---------------|---------------|--------|
+| Worker positions | `GET /api/workers/current` | All workers with live location, zone, signal, battery |
+| Worker detail | `GET /api/workers/{id}` | Full worker profile with last 50 movements |
+| Position history | `GET /api/workers/history?workerId=&from=&to=` | Historical movement data for reports |
+| Gateway status | `GET /api/gateways/status` | KNOT health dashboard with uptime, temp, battery |
+| Zone list | `GET /api/zones` | Mine zones with boundaries and restrictions |
+| SSE stream | `GET /api/stream/positions` | Real-time position pushes to Flutter map |
+| Worker register | `POST /api/workers/register` | Add new worker with BLE tag assignment |
+
+### 3. Alert Module
+
+**Why separate**: Alerts have independent lifecycle (open → in-progress → closed), assignment tracking, severity escalation. Different data models from tracking.
+
+| Responsibility | REST Endpoint | Detail |
+|---------------|---------------|--------|
+| Alert list | `GET /api/alerts?severity=&status=&type=` | Filterable alert feed with pagination |
+| Alert detail | `GET /api/alerts/{id}` | Full alert info with assignment history |
+| Assign alert | `POST /api/alerts/{id}/assign` | Assign to user/team |
+| Close alert | `POST /api/alerts/{id}/close` | Resolve alert with notes |
+| Alert stats | `GET /api/alerts/stats` | KPI counts: critical, warnings, open, resolved |
+| Geofence events | In-process trigger | Listening for zone boundary violations from Tracking |
+| SSE alerts | Part of stream | Pushes new critical alerts to Flutter in real-time |
+
+### 4. Admin Module
+
+**Why separate**: Centralizes user management, Keycloak integration, device inventory, and report aggregation. Single auth boundary for all Flutter backend calls.
+
+| Responsibility | REST Endpoint | Detail |
+|---------------|---------------|--------|
+| JWT validation | Spring Security filter | OAuth2 Resource Server — validates all Flutter tokens |
+| User management | `GET/POST /api/users` | Create, list users synced with Keycloak roles |
+| BLE devices | `GET/POST /api/ble-devices` | Tag inventory, assign/deactivate tags |
+| Reports | `GET /api/reports/{type}` | Daily personnel, shift report, attendance, battery health |
+| Audit log | `GET /api/audit-log` | System activity history |
+| Mine config | `GET/PUT /api/config/mine` | Zones, departments, shifts, notification thresholds |
+
+### 5. KNOT Device Simulator (Demo Only)
+
+**Why separate**: Demo must work reliably even without physical hardware. Simulates full KNOT behavior so the end-to-end pipeline is demonstrable.
+
+| Responsibility | Detail |
+|---------------|--------|
+| BLE detection simulation | Publishes realistic events with changing RSSI, battery, timestamps |
+| Worker movement | Positions shift over time to make map appear alive |
+| Gateway health | Cycles through normal/warning/critical states per KNOT |
+| Demo scenarios | Normal shift, emergency drill, geofence breach triggered on demand |
+
+---
+
+## Data Models
+
+| Entity | Module | Key Fields | Purpose |
+|--------|--------|-----------|---------|
+| **WorkerPosition** | Tracking | workerId, name, zone, bleTag, battery, signalDbm, status, x/y, lastSeen | Current live worker state |
+| **MovementHistory** | Tracking | workerId, zone, x/y, timestamp | Historical movement for reports |
+| **Alert** | Alert | severity, type, message, location, assignedTo, status, timestamp | Alert lifecycle management |
+| **GatewayHealth** | Tracking | gatewayId, location, signalDbm, powerSource, ups, temperature, batteryHealth, online | KNOT device monitoring |
+| **BleDevice** | Admin | tagId, battery, firmwareVersion, status, assignedWorker, lastDetected | BLE tag inventory |
+| **Zone** | Tracking | id, name, department, minX/minY/maxX/maxY, isRestricted | Mine zone definitions + geofence boundaries |
+
+---
+
+## Communication Patterns
+
+| Channel | Direction | Protocol | Purpose |
+|---------|-----------|----------|---------|
+| KNOT → Backend | Device → Ingestion | MQTT on RabbitMQ | BLE detections + gateway health |
+| Ingestion → Tracking | Same container | Direct method call | Processed detection events |
+| Tracking → Alert | Same container | Direct method call | Geofence violations, emergency triggers |
+| Backend → Flutter | Server → Client | REST HTTP + SSE | Data fetches + real-time position pushes |
+| Flutter → Backend | Client → Server | REST HTTP + JWT | Authenticated API calls |
+| Flutter ↔ Keycloak | App ↔ Identity | OAuth2 / OIDC PKCE | Login, token issuance, role validation |
+
+---
+
+## MQTT Topic Structure
+
+| Topic | Direction | Content |
+|-------|-----------|---------|
+| `minetrack/ble/detections` | KNOT → Backend | `{type, gateway, timestamp, ble_mac, rssi, battery_level, tag_id}` |
+| `minetrack/gateways/{id}/status` | KNOT → Backend | `{cpu, temperature, batteryHealth, online, lastComm}` |
+| `minetrack/commands/{id}` | Backend → KNOT | Control commands (future) |
+
+---
+
+## Keycloak Configuration
+
+| Setting | Value |
+|---------|-------|
+| Realm | `minetrack` |
+| Flutter client | `minetrack-web` — OpenID Connect, Authorization Code + PKCE |
+| Service clients | `tracking-svc`, `alert-svc`, `admin-svc` — confidential |
+| Demo client | `knot-simulator` — public |
+
+### Roles (Realm Roles)
+
+| Role | Access Level |
+|------|-------------|
+| `SURFACE_ADMIN` | Full admin: users, config, reports, all pages |
+| `SAFETY_OFFICER` | View alerts, assign incidents, view tracking and reports |
+| `MINE_SUPERVISOR` | Live tracking, personnel, reports, BLE devices |
+| `OPERATOR` | Dashboard read-only, live tracking map |
+
+---
+
+## Railway Deployment
+
+### Infrastructure
+| Resource | Specification |
+|----------|--------------|
+| PostgreSQL | Managed, 1GB storage |
+| RabbitMQ | With EMQX MQTT plugin enabled |
+| Keycloak | Docker image, 1GB RAM, H2 storage for demo |
+
+### Application (Single Docker Container)
+| Module | Memory | Port |
+|--------|--------|------|
+| Ingestion (Camel + MQTT) | 256MB | Embedded — shares app port |
+| Tracking (REST + SSE) | 512MB | 8080 |
+| Alert | 256MB | Embedded — shares app port |
+| Admin (Auth + Reports) | 512MB | Embedded — shares app port |
+| KNOT Simulator | 256MB | Embedded — shares app port |
+
+### Dockerfile
+```dockerfile
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+EXPOSE 8080
+CMD ["java", "-jar", "app.jar"]
+```
+
+### Environment Variables
+| Variable | Example Value | Purpose |
+|----------|--------------|---------|
+| `DATABASE_URL` | `postgresql://user:pass@host:5432/minetrack` | PostgreSQL connection |
+| `RABBITMQ_URL` | `amqp://user:pass@host:5672` | RabbitMQ connection |
+| `MQTT_BROKER_URL` | `mqtt://host:1883` | MQTT broker for Camel routes |
+| `KEYCLOCK_URL` | `https://minetrack-keycloak.railway.app` | Keycloak server URL |
+| `KEYCLOCK_REALM` | `minetrack` | Keycloak realm name |
+
+---
+
+## Flutter Changes Required
+
+| Area | Current State | Required Change |
+|------|-------------|-----------------|
+| **Auth** | Mock login (any input works) | Keycloak PKCE flow + token storage |
+| **Data** | Static `mock_data.dart` | Repository pattern with HTTP calls to backend |
+| **Live updates** | None (static mock data) | SSE listener for real-time position pushes |
+| **State** | Single `AppState` ChangeNotifier | Per-page state with API sync + SSE stream |
+| **API client** | None | HTTP client with JWT bearer token interceptor |
+
+### Page-by-Page API Mapping
+
+| Flutter Page | Backend API(s) Called |
+|-------------|----------------------|
+| Login | Keycloak PKCE redirect + token exchange |
+| Dashboard | `GET /api/workers/current`, `/api/gateways/status`, `/api/alerts/stats`, SSE stream |
+| Live Tracking | `GET /api/workers/current`, `/api/workers/{id}`, SSE positions, `/api/zones` |
+| Personnel | `GET/POST /api/workers`, search/filter via query params |
+| BLE Devices | `GET /api/ble-devices?status=`, `/api/ble-devices/assign` |
+| Alerts | `GET /api/alerts?filter=`, `/api/alerts/{id}/assign`, `/api/alerts/{id}/close` |
+| Reports | `GET /api/reports/{type}` — daily, shift, battery, attendance, etc. |
+| Admin | `GET/POST /api/users`, `/api/config/mine`, `/api/audit-log` |
+| Settings | `PUT /api/config/thresholds` — battery/signal thresholds, notification toggles |
+
+---
+
+## 13-Day Implementation Schedule
+
+### Phase 1: Foundation (Days 1–3, Jul 19–21)
+
+| Day | Task | Owner |
+|-----|------|-------|
+| **1** | Railway project setup: provision PostgreSQL + RabbitMQ | Dev A |
+| **1** | Keycloak Docker deployment: realm, clients, roles, test users | Dev A |
+| **2** | Tracking module: entity classes + JPA repositories (WorkerPosition, MovementHistory, Zone, GatewayHealth) | Dev B |
+| **2** | Admin module: BleDevice entity + REST controllers for devices, users, config | Dev B |
+| **3** | Alert module: Alert entity + CRUD REST API + seed data | Dev C |
+| **3** | Security: Spring Security OAuth2 Resource Server in all modules, Keycloak JWT validation filter | Dev A + B |
+
+### Phase 2: Data Pipeline (Days 4–6, Jul 22–24)
+
+| Day | Task | Owner |
+|-----|------|-------|
+| **4** | KNOT Simulator: MQTT publishers for BLE detections + gateway health + worker movement | Dev A |
+| **4** | Ingestion module: Apache Camel MQTT routes, BLE event parser, RSSI nearest-gateway logic | Dev A |
+| **5** | Tracking module: REST endpoints (`/current`, `/history`, `/gateways/status`) + position upsert | Dev B |
+| **5** | Tracking module: SSE endpoint for real-time position stream to Flutter | Dev B |
+| **6** | Alert module: geofence violation trigger + assign/close endpoints + SSE alert push | Dev C |
+| **6** | Alert module: `/api/alerts/stats` KPI aggregation + `/api/alerts/types` definitions | Dev C |
+
+### Phase 3: Flutter Integration (Days 7–10, Jul 25–28)
+
+| Day | Task | Owner |
+|-----|------|-------|
+| **7** | Flutter: Keycloak PKCE login flow + `flutter_secure_storage` for tokens + auth interceptor | Dev B |
+| **7** | Flutter: Replace `mock_data.dart` with repository pattern (HTTP + JSON serialization) | Dev B or C |
+| **8** | Flutter: SSE listener — connect to `/api/stream/positions`, update map live | Dev B |
+| **8–9** | Flutter: Wire all 9 pages to backend APIs (Dashboard, Live Tracking, Personnel, BLE Devices, Alerts) | Dev C |
+| **9–10** | Flutter: Admin page, Settings page (thresholds), Reports page, search/filter from API | Dev C |
+
+### Phase 4: Polish & Demo (Days 11–13, Jul 29–31)
+
+| Day | Task | Owner |
+|-----|------|-------|
+| **11** | Full end-to-end test: KNOT Simulator → MQTT → Backend → Flutter. Fix all broken flows | All |
+| **11** | Simulator: demo scenarios (normal shift, emergency drill, geofence breach) | Dev A |
+| **12** | SSE stability + map performance with live updates, HTTP polling fallback if SSE drops | Dev B |
+| **12** | Reports module: aggregation endpoints (daily, shift, battery, attendance) | Dev C |
+| **13** | Final demo dry run (2+ hours), fix remaining issues, deploy to Railway for live demo | All |
+
+---
+
+## 15-Minute Demo Script
+
+| Time | Section | What You Show |
+|------|---------|--------------|
+| 0:30 | **Login** | Keycloak PKCE login screen — real OAuth2 flow, not mock |
+| 1:30 | **Dashboard** | Live KPI cards updating in real-time. Switch Personnel/Gateway tabs |
+| 5:30 | **Live Tracking Map** | Workers moving underground in real-time. Hover tooltips with BLE tag/battery/signal. Layer switching (normal/heatmap/gas). Click worker for detailed panel |
+| 7:30 | **Geofence Breach** | Trigger simulator event: worker enters restricted gas zone. Alert appears instantly on Dashboard and map flashes red |
+| 9:30 | **Alert Workflow** | Assign alert to safety officer. Mark as in-progress. Close with resolution notes |
+| 10:30 | **Personnel + BLE** | Register new worker with BLE tag. Show device inventory, filter by status, reassign tag |
+| 11:30 | **Reports** | Generate Daily Personnel Report, Battery Health breakdown, Gateway Uptime chart |
+| 12:30 | **Gateway Health** | Show KNOT device panel — temperature, battery, uptime, signal strength for all 10 gateways |
+| 13:30 | **SOS Emergency** | Trigger SOS from simulator. Critical alert with blinking indicator. Map highlights emergency worker |
+| 15:00 | **Summary** | Full stack recap: KNOT BLE detection → MQTT → Spring Boot/Camel → PostgreSQL → SSE → Flutter web on Railway |
+
+---
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Railway MQTT support limited | Ingestion can't receive KNOT data | Use RabbitMQ with EMQX Docker image which includes native MQTT support |
+| Keycloak consumes too much memory on Railway | OOM kills, service crashes | Allocate 1GB minimum, use H2 in-memory storage for demo |
+| SSE connections unstable on Railway | Flutter stops receiving position updates | Implement HTTP polling fallback (30s interval) that activates automatically if SSE drops |
+| Physical KNOT BLE scanning unreliable for demo | Map shows stale or no worker positions | KNOT Simulator always active as primary source; physical tags are bonus, not requirement |
+| Too many modules for 13 days | Delays and integration failures | Modular monolith: single Docker container, direct method calls. Clean code separation, simple deployment |
+| Keycloak setup complexity on Railway | Auth delays block all other work | Provision Keycloak on Day 1, create test users immediately. Use `quay.io/keycloak/keycloak` Docker image |
+
+---
+
+## Quick Start (Local Development)
+
+### Prerequisites
+- Flutter SDK ^3.11, Dart SDK
+- Java 21+, Maven 3.9+
+- Docker + Docker Compose
+
+### Infrastructure (Day 1)
+```bash
+# Start PostgreSQL, RabbitMQ with MQTT, Keycloak
+docker compose up -d
+
+# Wait for services, then run backend
+cd backend/
+mvn clean package -DskipTests
+java -jar target/mminetrack.jar
+
+# Run Flutter app
+cd flutter_app/
+flutter pub get
+flutter run -d chrome
+```
 
 Built for MineTrack by InnovAI Technologies. Font: Inter (SIL Open Font
 License). CanvasKit is part of the Flutter engine (BSD-style license).
