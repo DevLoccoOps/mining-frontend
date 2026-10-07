@@ -1,0 +1,12 @@
+# Only build/web and nginx.conf are COPYed into the image; the rest just
+# bloats the docker context.
+.git
+.dart_tool
+.idea
+.vscode
+android
+ios
+macos
+linux
+windows
+test
