@@ -5,13 +5,19 @@ import 'core/app_state.dart';
 import 'core/page_type.dart';
 import 'pages/admin_page.dart';
 import 'pages/alerts_page.dart';
+import 'pages/analytics_page.dart';
 import 'pages/ble_devices_page.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/gateways_page.dart';
 import 'pages/live_tracking_page.dart';
 import 'pages/login_page.dart';
+import 'pages/mine_zones_page.dart';
 import 'pages/personnel_page.dart';
 import 'pages/reports_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/shifts_page.dart';
+import 'pages/system_health_page.dart';
+import 'pages/visitors_page.dart';
 import 'theme/app_theme.dart';
 import 'widgets/placeholder_page.dart';
 import 'widgets/sidebar.dart';
@@ -34,8 +40,22 @@ class MineTrackApp extends StatelessWidget {
   }
 }
 
-class _Shell extends StatelessWidget {
+class _Shell extends StatefulWidget {
   const _Shell();
+
+  @override
+  State<_Shell> createState() => _ShellState();
+}
+
+class _ShellState extends State<_Shell> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Responsive sidebar: auto-collapse on phone widths. Only ever collapses —
+    // a manual expand on a small screen is left alone until the width changes.
+    final width = MediaQuery.of(context).size.width;
+    if (width < 700) context.read<AppState>().setCollapsed(true);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,19 +98,26 @@ class _Shell extends StatelessWidget {
       case PageKey.settings:
         return const SettingsPage();
       case PageKey.gateways:
-        return PlaceholderPage(title: key.title, icon: Icons.wifi);
+        return const GatewaysPage();
       case PageKey.mineZones:
-        return PlaceholderPage(title: key.title, icon: Icons.map_outlined);
+        return const MineZonesPage();
       case PageKey.analytics:
-        return PlaceholderPage(title: key.title, icon: Icons.bar_chart);
+        return const AnalyticsPage();
       case PageKey.shifts:
-        return PlaceholderPage(title: key.title, icon: Icons.calendar_month);
+        return const ShiftsPage();
       case PageKey.visitors:
-        return PlaceholderPage(title: key.title, icon: Icons.person_add_alt);
+        return const VisitorsPage();
       case PageKey.auditLogs:
-        return PlaceholderPage(title: key.title, icon: Icons.history);
+        // Requires an authentication backend the system does not have yet.
+        return const PlaceholderPage(
+          title: 'Audit Logs',
+          icon: Icons.history,
+          message: 'Audit logging requires user accounts and sign-in, which the '
+              'backend does not implement yet. Every system event is still '
+              'recorded on the Alerts page.',
+        );
       case PageKey.systemHealth:
-        return PlaceholderPage(title: key.title, icon: Icons.dns);
+        return const SystemHealthPage();
     }
   }
 }

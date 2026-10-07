@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart' hide Badge;
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
-import '../models/worker.dart';
+import '../core/live_service.dart';
+import '../models/api_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/badge.dart';
 import '../widgets/charts.dart';
@@ -15,16 +16,42 @@ class PersonnelPage extends StatefulWidget {
 
 class _PersonnelPageState extends State<PersonnelPage> {
   final _search = TextEditingController();
-  String _dept = 'All';
+  String _role = 'All';
   String _status = 'All';
-  List<Worker> _filtered() => workers.where((w) {
-        final ms = w.name.toLowerCase().contains(_search.text.toLowerCase()) || w.empNo.contains(_search.text);
-        final md = _dept == 'All' || w.dept == _dept;
-        final mst = _status == 'All' || w.status.label == _status;
-        return ms && md && mst;
-      }).toList();
 
-  List<String> get _depts => ['All', ...{for (final w in workers) w.dept}];
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// A personnel row joined with its live tag telemetry (null when the
+  /// assigned tag isn't currently reporting).
+  (PersonnelRecord, MinerEntry?)? _liveFor(PersonnelRecord p, Iterable<MinerEntry> miners) {
+    final normalized = p.assignedMac?.replaceAll(':', '').replaceAll('-', '').toUpperCase();
+    if (normalized == null || normalized.isEmpty) return (p, null);
+    try {
+      final m = miners.firstWhere((m) => m.mac.toUpperCase() == normalized);
+      return (p, m);
+    } catch (_) {
+      return (p, null);
+    }
+  }
+
+  List<(PersonnelRecord, MinerEntry?)> _filtered(LiveService live) {
+    final rows = live.personnel.map((p) => _liveFor(p, live.state.miners)).whereType<(PersonnelRecord, MinerEntry?)>().toList();
+    final q = _search.text.toLowerCase();
+    return rows.where((row) {
+      final (p, m) = row;
+      final ms = p.name.toLowerCase().contains(q) || p.id.toLowerCase().contains(q) || (p.assignedMac ?? '').toLowerCase().contains(q);
+      final md = _role == 'All' || (p.role ?? '') == _role;
+      final live = m != null ? 'Underground' : 'Not reporting';
+      final mst = _status == 'All' || live == _status;
+      return ms && md && mst;
+    }).toList();
+  }
+
+  List<String> _roles(List<PersonnelRecord> personnel) => ['All', ...{for (final p in personnel) if (p.role != null) p.role!}];
 
   void _openRegister() {
     showDialog(context: context, builder: (_) => const _RegisterDialog());
@@ -33,7 +60,9 @@ class _PersonnelPageState extends State<PersonnelPage> {
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final filtered = _filtered();
+    final live = context.watch<LiveService>();
+    final filtered = _filtered(live);
+    final reporting = filtered.where((r) => r.$2 != null).length;
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -46,7 +75,7 @@ class _PersonnelPageState extends State<PersonnelPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Personnel Management', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: t.fg)),
-                  Text('${workers.length} workers currently underground', style: TextStyle(fontSize: 13, color: t.muted)),
+                  Text('${live.personnel.length} registered · $reporting currently underground', style: TextStyle(fontSize: 13, color: t.muted)),
                 ],
               ),
               const Spacer(),
@@ -72,21 +101,16 @@ class _PersonnelPageState extends State<PersonnelPage> {
                   child: TextField(
                     controller: _search,
                     onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      hintText: 'Search by name or employee number…',
-                      prefixIcon: const Icon(Icons.search, size: 14),
+                    decoration: const InputDecoration(
+                      hintText: 'Search by name, ID, or tag MAC…',
+                      prefixIcon: Icon(Icons.search, size: 14),
                       isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
                     ),
                   ),
                 ),
-                _dropdown(_depts, _dept, (v) => setState(() => _dept = v), t),
-                _dropdown(['All', 'Moving', 'Stationary', 'Emergency', 'Surface'], _status, (v) => setState(() => _status = v), t),
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.download, size: 13),
-                  label: const Text('Export'),
-                ),
+                _dropdown(_roles(live.personnel), _role, (v) => setState(() => _role = v), t),
+                _dropdown(['All', 'Underground', 'Not reporting'], _status, (v) => setState(() => _status = v), t),
               ],
             ),
           ),
@@ -95,26 +119,22 @@ class _PersonnelPageState extends State<PersonnelPage> {
           Expanded(
             child: Container(
               decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
-              child: Column(
-                children: [
-                  Expanded(child: _table(filtered, t)),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(border: Border(top: BorderSide(color: t.border))),
-                    child: Row(
-                      children: [
-                        Text('Showing ${filtered.length} of ${workers.length} employees', style: TextStyle(fontSize: 12, color: t.muted)),
-                        const Spacer(),
-                        OutlinedButton(onPressed: () {}, child: const Text('Previous')),
-                        const SizedBox(width: 8),
-                        ElevatedButton(onPressed: () {}, child: const Text('1')),
-                        const SizedBox(width: 8),
-                        OutlinedButton(onPressed: () {}, child: const Text('Next')),
-                      ],
+              child: filtered.isEmpty
+                  ? Center(
+                      child: Text(
+                        live.personnel.isEmpty
+                            ? 'No personnel registered yet — use "Register Employee"'
+                            : 'No personnel match the filters',
+                        style: TextStyle(fontSize: 13, color: t.muted),
+                      ),
+                    )
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: _table(filtered, t),
+                      ),
                     ),
-                  ),
-                ],
-              ),
             ),
           ),
         ],
@@ -123,6 +143,8 @@ class _PersonnelPageState extends State<PersonnelPage> {
   }
 
   Widget _dropdown(List<String> items, String value, ValueChanged<String> onChg, SurfaceTokens t) {
+    // A filter value may vanish from the data; fall back to 'All'.
+    final effective = items.contains(value) ? value : 'All';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
@@ -132,7 +154,7 @@ class _PersonnelPageState extends State<PersonnelPage> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: value,
+          value: effective,
           dropdownColor: t.card,
           items: items
               .map((d) => DropdownMenuItem(
@@ -154,47 +176,59 @@ class _PersonnelPageState extends State<PersonnelPage> {
     );
   }
 
-  Widget _table(List<Worker> rows, SurfaceTokens t) {
-    final headers = ['Photo', 'Emp No', 'Full Name', 'Department', 'Shift', 'Zone', 'BLE Tag', 'Battery', 'Signal', 'Status', 'Last Seen', 'Actions'];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        columnSpacing: 16,
-        headingRowColor: MaterialStateProperty.all(t.mutedBg.withOpacity(0.4)),
-        columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
-        rows: rows
-            .map((w) => DataRow(cells: [
-                  DataCell(CircleAvatar(
-                    radius: 16,
-                    backgroundColor: const Color(0xFF3B82F6),
-                    child: Text(w.initials, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                  )),
-                  DataCell(Text(w.empNo, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
-                  DataCell(Text(w.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg))),
-                  DataCell(Text(w.dept, style: TextStyle(fontSize: 11, color: t.muted))),
-                  DataCell(Badge(label: w.shift, color: BadgeColor.blue)),
-                  DataCell(Text(w.zone, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: t.fg))),
-                  DataCell(Text(w.bleTag, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.fg))),
-                  DataCell(BatteryBar(value: w.battery, width: 56)),
-                  DataCell(Text('${w.signal}', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
-                  DataCell(Badge(
-                      label: w.status.label,
-                      color: w.status == WorkerStatus.emergency
-                          ? BadgeColor.red
-                          : w.status == WorkerStatus.moving
-                              ? BadgeColor.blue
-                              : BadgeColor.gray)),
-                  DataCell(Text(w.lastSeen, style: TextStyle(fontSize: 11, color: t.muted))),
-                  DataCell(Row(children: [
-                    IconButton(icon: const Icon(Icons.visibility_outlined, size: 13), onPressed: () {}, splashRadius: 12, tooltip: 'View'),
-                    IconButton(icon: const Icon(Icons.navigation_outlined, size: 13), onPressed: () {}, splashRadius: 12, tooltip: 'Track'),
-                    IconButton(icon: const Icon(Icons.edit, size: 13), onPressed: () {}, splashRadius: 12, tooltip: 'Edit'),
-                    IconButton(icon: const Icon(Icons.tag, size: 13), onPressed: () {}, splashRadius: 12, tooltip: 'Assign Tag'),
-                  ])),
-                ]))
-            .toList(),
-      ),
+  Widget _table(List<(PersonnelRecord, MinerEntry?)> rows, SurfaceTokens t) {
+    final headers = ['Emp No', 'Full Name', 'Role', 'Shift', 'BLE Tag', 'Zone', 'Battery', 'Temp', 'Signal', 'Status', 'Last Seen'];
+    return DataTable(
+      columnSpacing: 16,
+      headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
+      columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
+      rows: rows
+          .map((row) {
+            final (p, m) = row;
+            final emergency = m?.alerts.any((a) => a.type == 'critical') ?? false;
+            return DataRow(
+              color: WidgetStateProperty.all(emergency ? t.mutedBg.withOpacity(0.15) : null),
+              cells: [
+                DataCell(Text(p.id, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
+                DataCell(Row(children: [
+                  CircleAvatar(
+                      radius: 16,
+                      backgroundColor: emergency ? AppColors.red : AppColors.blue600,
+                      child: Text(_initials(p.name), style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))),
+                  const SizedBox(width: 8),
+                  Text(p.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
+                ])),
+                DataCell(Text(p.role ?? '—', style: TextStyle(fontSize: 11, color: t.muted))),
+                DataCell(Badge(label: p.shift ?? '—', color: BadgeColor.blue)),
+                DataCell(Text(p.assignedMac ?? '—', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.fg))),
+                DataCell(Text(m?.zone ?? '—', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: t.fg))),
+                DataCell(m?.battery != null ? BatteryBar(value: m!.battery!, width: 56) : Text('—', style: TextStyle(fontSize: 11, color: t.muted))),
+                DataCell(m?.temperature != null
+                    ? Text('${m!.temperature!.toStringAsFixed(1)}°C', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.fg))
+                    : Text('—', style: TextStyle(fontSize: 11, color: t.muted))),
+                DataCell(m != null
+                    ? Text('${m.rssi.toStringAsFixed(0)} dBm', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))
+                    : Text('—', style: TextStyle(fontSize: 11, color: t.muted))),
+                DataCell(m == null
+                    ? const Badge(label: 'Not reporting', color: BadgeColor.gray)
+                    : emergency
+                        ? const Badge(label: 'EMERGENCY', color: BadgeColor.red)
+                        : m.moving
+                            ? const Badge(label: 'Moving', color: BadgeColor.blue)
+                            : const Badge(label: 'Stationary', color: BadgeColor.green)),
+                DataCell(Text(m != null ? timeAgoFromEpoch(m.lastSeen) : '—', style: TextStyle(fontSize: 11, color: t.muted))),
+              ],
+            );
+          })
+          .toList(),
     );
+  }
+
+  String _initials(String name) {
+    final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, parts.first.length > 2 ? 2 : 1).toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 }
 
@@ -205,8 +239,61 @@ class _RegisterDialog extends StatefulWidget {
   State<_RegisterDialog> createState() => _RegisterDialogState();
 }
 
+/// Registers an employee against the backend `POST /api/personnel`.
+/// The backend stores id, name, role, shift and assigned tag; the extra
+/// wizard fields (medical, PPE, contacts) are not persisted yet.
 class _RegisterDialogState extends State<_RegisterDialog> {
   int _step = 1;
+  bool _saving = false;
+  String? _error;
+
+  final _empNo = TextEditingController();
+  final _firstName = TextEditingController();
+  final _surname = TextEditingController();
+  final _role = TextEditingController();
+  final _tagMac = TextEditingController();
+  String _shift = 'Day';
+
+  @override
+  void dispose() {
+    _empNo.dispose();
+    _firstName.dispose();
+    _surname.dispose();
+    _role.dispose();
+    _tagMac.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = '${_firstName.text.trim()} ${_surname.text.trim()}'.trim();
+    if (_empNo.text.trim().isEmpty || name.isEmpty) {
+      setState(() {
+        _step = 1;
+        _error = 'Employee number and name are required';
+      });
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final ok = await context.read<LiveService>().savePersonnel(PersonnelRecord(
+          _empNo.text.trim(),
+          name,
+          _role.text.trim().isEmpty ? null : _role.text.trim(),
+          _shift,
+          _tagMac.text.trim().isEmpty ? null : _tagMac.text.trim().toUpperCase(),
+        ));
+    if (!mounted) return;
+    if (ok) {
+      Navigator.pop(context);
+    } else {
+      setState(() {
+        _saving = false;
+        _error = 'Backend rejected the registration (check the employee number is unique and the MAC is valid)';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -233,7 +320,7 @@ class _RegisterDialogState extends State<_RegisterDialog> {
                   IconButton(
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: () => Navigator.pop(context),
-                    splashRadius: 16,
+                    tooltip: 'Close',
                   ),
                 ],
               ),
@@ -287,11 +374,28 @@ class _RegisterDialogState extends State<_RegisterDialog> {
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
-                child: _step == 1
-                    ? _step1(t)
-                    : _step == 2
-                        ? _step2(t)
-                        : _step3(t),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_error != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.red.withValues(alpha: 0.1),
+                          border: Border.all(color: AppColors.red.withValues(alpha: 0.3)),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.error_outline, size: 14, color: AppColors.red),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_error!, style: TextStyle(fontSize: 12, color: t.fg))),
+                        ]),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_step == 1) _step1(t) else if (_step == 2) _step2(t) else _step3(t),
+                  ],
+                ),
               ),
             ),
             const Divider(height: 1),
@@ -301,25 +405,23 @@ class _RegisterDialogState extends State<_RegisterDialog> {
               child: Row(
                 children: [
                   OutlinedButton(
-                    onPressed: () {
-                      if (_step > 1) {
-                        setState(() => _step--);
-                      } else {
-                        Navigator.pop(context);
-                      }
-                    },
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            if (_step > 1) {
+                              setState(() => _step--);
+                            } else {
+                              Navigator.pop(context);
+                            }
+                          },
                     child: Text(_step > 1 ? 'Back' : 'Cancel'),
                   ),
                   const Spacer(),
                   ElevatedButton(
-                    onPressed: () {
-                      if (_step < 3) {
-                        setState(() => _step++);
-                      } else {
-                        Navigator.pop(context);
-                      }
-                    },
-                    child: Text(_step == 3 ? 'Save Employee' : 'Continue'),
+                    onPressed: _saving ? null : () async { if (_step < 3) { setState(() => _step++); } else { await _save(); } },
+                    child: _saving
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Text(_step == 3 ? 'Save Employee' : 'Continue'),
                   ),
                 ],
               ),
@@ -330,33 +432,29 @@ class _RegisterDialogState extends State<_RegisterDialog> {
     );
   }
 
+  Widget _field(String label, String hint, TextEditingController controller, SurfaceTokens t) {
+    return SizedBox(
+      width: 250,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
+          const SizedBox(height: 6),
+          TextField(controller: controller, decoration: InputDecoration(hintText: hint, isDense: true)),
+        ],
+      ),
+    );
+  }
+
   Widget _step1(SurfaceTokens t) {
-    final fields = [
-      ('Employee Number', 'EMP-XXX'),
-      ('National ID', 'ID Number'),
-      ('First Name', 'John'),
-      ('Surname', 'Smith'),
-      ('Phone Number', '+27 XX XXX XXXX'),
-      ('Department', 'Mining'),
-      ('Position / Role', 'Underground Miner'),
-      ('Contractor', 'Internal / Company name'),
-    ];
     return Wrap(
       spacing: 16,
       runSpacing: 16,
       children: [
-        for (final f in fields)
-          SizedBox(
-            width: 250,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(f.$1, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
-                const SizedBox(height: 6),
-                TextField(decoration: InputDecoration(hintText: f.$2, isDense: true)),
-              ],
-            ),
-          ),
+        _field('Employee Number', 'EMP-001', _empNo, t),
+        _field('First Name', 'John', _firstName, t),
+        _field('Surname', 'Smith', _surname, t),
+        _field('Position / Role', 'Underground Miner', _role, t),
         SizedBox(
           width: 250,
           child: Column(
@@ -365,6 +463,7 @@ class _RegisterDialogState extends State<_RegisterDialog> {
               Text('Shift', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
+                value: _shift,
                 decoration: InputDecoration(
                   isDense: true,
                   filled: true,
@@ -374,35 +473,10 @@ class _RegisterDialogState extends State<_RegisterDialog> {
                 ),
                 dropdownColor: t.card,
                 style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
-                items: ['Day Shift', 'Night Shift', 'Rotating']
+                items: ['Day', 'Night', 'Rotating']
                     .map((s) => DropdownMenuItem(value: s, child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'))))
                     .toList(),
-                onChanged: (_) {},
-              ),
-            ],
-          ),
-        ),
-        SizedBox(
-          width: 250,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('PPE Size', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                decoration: InputDecoration(
-                  isDense: true,
-                  filled: true,
-                  fillColor: t.mutedBg,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: t.border)),
-                ),
-                dropdownColor: t.card,
-                style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
-                items: ['Small', 'Medium', 'Large', 'XL']
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'))))
-                    .toList(),
-                onChanged: (_) {},
+                onChanged: (v) => _shift = v ?? 'Day',
               ),
             ],
           ),
@@ -419,6 +493,7 @@ class _RegisterDialogState extends State<_RegisterDialog> {
           spacing: 16,
           runSpacing: 16,
           children: [
+            _field('Assigned Tag MAC', 'AA:BB:CC:DD:EE:FF', _tagMac, t),
             SizedBox(
               width: 250,
               child: Column(
@@ -426,7 +501,9 @@ class _RegisterDialogState extends State<_RegisterDialog> {
                 children: [
                   Text('Medical Expiry', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
                   const SizedBox(height: 6),
-                  TextField(decoration: const InputDecoration(isDense: true, suffixIcon: Icon(Icons.calendar_today_outlined, size: 14))),
+                  TextField(
+                      decoration: const InputDecoration(
+                          isDense: true, suffixIcon: Icon(Icons.calendar_today_outlined, size: 14))),
                 ],
               ),
             ),
@@ -437,7 +514,9 @@ class _RegisterDialogState extends State<_RegisterDialog> {
                 children: [
                   Text('Training Expiry', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
                   const SizedBox(height: 6),
-                  TextField(decoration: const InputDecoration(isDense: true, suffixIcon: Icon(Icons.calendar_today_outlined, size: 14))),
+                  TextField(
+                      decoration: const InputDecoration(
+                          isDense: true, suffixIcon: Icon(Icons.calendar_today_outlined, size: 14))),
                 ],
               ),
             ),

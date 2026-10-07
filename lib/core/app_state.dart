@@ -29,6 +29,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// No-op when already in the requested state (used by responsive layout).
+  void setCollapsed(bool v) {
+    if (collapsed == v) return;
+    collapsed = v;
+    notifyListeners();
+  }
+
   void toggleDarkMode() {
     darkMode = !darkMode;
     notifyListeners();

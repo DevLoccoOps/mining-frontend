@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
+import '../core/live_service.dart';
 import '../core/page_type.dart';
-import '../data/mock_data.dart';
-import '../models/alert_item.dart';
 
 class Sidebar extends StatelessWidget {
   const Sidebar({super.key});
@@ -64,27 +63,42 @@ class Sidebar extends StatelessWidget {
               children: navSections.expand((sec) => _section(context, sec, collapsed, page)).toList(),
             ),
           ),
-          // Footer
-          Container(
-            padding: EdgeInsets.all(collapsed ? 8 : 16),
-            decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0x11FFFFFF)))),
-            child: collapsed
-                ? const Center(child: _PulseDot())
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: const [
-                          _PulseDot(),
-                          SizedBox(width: 8),
-                          Text('Server Online', style: TextStyle(color: Color(0xFF4ADE80), fontSize: 12, fontWeight: FontWeight.w500)),
+          // Footer — real backend connection status
+          Builder(
+            builder: (context) {
+              final live = context.watch<LiveService>();
+              final (color, label) = switch (live.status) {
+                ConnStatus.live => (const Color(0xFF4ADE80), 'Live — backend connected'),
+                ConnStatus.connecting => (const Color(0xFFFBBF24), 'Connecting…'),
+                ConnStatus.offline => (const Color(0xFFF87171), 'Backend offline'),
+              };
+              return Container(
+                padding: EdgeInsets.all(collapsed ? 8 : 16),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0x11FFFFFF)))),
+                child: collapsed
+                    ? Center(child: _PulseDot(color: color, animate: live.status == ConnStatus.live))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _PulseDot(color: color, animate: live.status == ConnStatus.live),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          const Text('Version 1.0 · InnovAI Technologies',
+                              style: TextStyle(color: Color(0x99BFDBFE), fontSize: 10)),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      const Text('Version 1.0 · InnovAI Technologies',
-                          style: TextStyle(color: Color(0x99BFDBFE), fontSize: 10)),
-                    ],
-                  ),
+              );
+            },
           ),
         ],
       ),
@@ -93,6 +107,7 @@ class Sidebar extends StatelessWidget {
 
   List<Widget> _section(BuildContext context, NavSection sec, bool collapsed, PageKey active) {
     final app = context.read<AppState>();
+    final live = context.watch<LiveService>();
     final items = <Widget>[];
     if (!collapsed) {
       items.add(Padding(
@@ -105,9 +120,7 @@ class Sidebar extends StatelessWidget {
     }
     for (final item in sec.items) {
       final isActive = active == item.id;
-      final alertCount = item.id == PageKey.alerts
-          ? alerts.where((a) => a.status != AlertStatus.closed).length
-          : null;
+      final alertCount = item.id == PageKey.alerts ? live.state.alerts.length : null;
       items.add(_navItem(item, isActive, collapsed, app, alertCount));
     }
     if (!collapsed) items.add(const SizedBox(height: 8));
@@ -163,7 +176,9 @@ class Sidebar extends StatelessWidget {
 }
 
 class _PulseDot extends StatefulWidget {
-  const _PulseDot();
+  final Color color;
+  final bool animate;
+  const _PulseDot({this.color = const Color(0xFF4ADE80), this.animate = true});
 
   @override
   State<_PulseDot> createState() => _PulseDotState();
@@ -182,14 +197,24 @@ class _PulseDotState extends State<_PulseDot> with SingleTickerProviderStateMixi
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PulseDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _syncMotion();
+  }
+
+  void _syncMotion() {
     // Honor the platform "reduce motion" setting: render a steady dot instead of pulsing.
-    final reduce = MediaQuery.of(context).disableAnimations;
-    if (reduce && _animating) {
-      _c.stop();
-      _animating = false;
-    } else if (!reduce && !_animating) {
+    final shouldAnimate = widget.animate && !MediaQuery.of(context).disableAnimations;
+    if (shouldAnimate && !_animating) {
       _c.repeat(reverse: true);
       _animating = true;
+    } else if (!shouldAnimate && _animating) {
+      _c.stop();
+      _animating = false;
     }
   }
 
@@ -205,7 +230,7 @@ class _PulseDotState extends State<_PulseDot> with SingleTickerProviderStateMixi
       animation: _c,
       builder: (_, __) => Opacity(
         opacity: 0.4 + 0.6 * _c.value,
-        child: Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF4ADE80), shape: BoxShape.circle)),
+        child: Container(width: 8, height: 8, decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)),
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../data/mock_data.dart';
+import '../models/api_models.dart';
 import '../theme/app_theme.dart';
 import '../utils/helpers.dart';
 
@@ -26,12 +27,13 @@ class BatteryDonut extends StatelessWidget {
   final double size;
   final double inner;
   final double outer;
-  const BatteryDonut({super.key, this.size = 160, this.inner = 45, this.outer = 68});
+  final List<BatterySlice> data;
+  const BatteryDonut({super.key, this.size = 160, this.inner = 45, this.outer = 68, this.data = const []});
 
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final total = batteryPie.fold<int>(0, (sum, s) => sum + s.value);
+    final total = data.fold<int>(0, (sum, s) => sum + s.value);
     return SizedBox(
       width: double.infinity,
       height: size,
@@ -42,7 +44,7 @@ class BatteryDonut extends StatelessWidget {
             PieChartData(
               sectionsSpace: 3,
               centerSpaceRadius: inner,
-              sections: batteryPie
+              sections: data
                   .map((s) => PieChartSectionData(
                         value: s.value.toDouble(),
                         color: Color(s.color),
@@ -68,19 +70,20 @@ class BatteryDonut extends StatelessWidget {
 }
 
 class WorkerDistributionBar extends StatelessWidget {
-  const WorkerDistributionBar({super.key});
+  final List<ZoneCount> data;
+  const WorkerDistributionBar({super.key, this.data = const []});
 
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final maxN = workerDist.map((e) => e.n).reduce((a, b) => a > b ? a : b);
+    final maxN = data.isEmpty ? 1.0 : data.map((e) => e.n).reduce((a, b) => a > b ? a : b).toDouble();
     return SizedBox(
       height: 200,
       child: BarChart(
         BarChartData(
-          maxY: (maxN + 1).toDouble(),
-          barGroups: List.generate(workerDist.length, (i) {
-            final e = workerDist[i];
+          maxY: maxN + 1,
+          barGroups: List.generate(data.length, (i) {
+            final e = data[i];
             return BarChartGroupData(
               x: i,
               barRods: [
@@ -101,7 +104,9 @@ class WorkerDistributionBar extends StatelessWidget {
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 32,
-                getTitlesWidget: (v, _) => _bottomTitle(workerDist[v.toInt()].zone, color: t.muted),
+                getTitlesWidget: (v, _) => v.toInt() >= 0 && v.toInt() < data.length
+                    ? _bottomTitle(data[v.toInt()].zone, color: t.muted)
+                    : const SizedBox(),
               ),
             ),
           ),
@@ -338,6 +343,79 @@ class BatteryBar extends StatelessWidget {
         const SizedBox(width: 6),
         Text('$value%', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: col)),
       ],
+    );
+  }
+}
+/// Live line chart over the backend's recent telemetry history. Readings are
+/// bucketed per minute; [valuePicker] selects the field to plot (temp, RSSI…).
+class TelemetryTrendChart extends StatelessWidget {
+  final List<TelemetryRecord> readings;
+  final double? Function(TelemetryRecord) valuePicker;
+  final Color color;
+  final double minY;
+  final double maxY;
+  final String unit;
+  const TelemetryTrendChart({
+    super.key,
+    required this.readings,
+    required this.valuePicker,
+    this.color = const Color(0xFF3B82F6),
+    this.minY = 0,
+    this.maxY = 100,
+    this.unit = '',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokensOf(context);
+    final points = readings
+        .where((r) => r.createdAt != null && valuePicker(r) != null)
+        .toList()
+      ..sort((a, b) => a.createdAt!.compareTo(b.createdAt!));
+    if (points.isEmpty) {
+      return SizedBox(
+        height: 180,
+        child: Center(child: Text('No readings yet — waiting for tag telemetry', style: TextStyle(fontSize: 12, color: t.muted))),
+      );
+    }
+    // Per-minute averages, capped at 60 points.
+    final first = points.first.createdAt!;
+    final byMinute = <int, List<double>>{};
+    for (final p in points) {
+      byMinute.putIfAbsent(p.createdAt!.difference(first).inMinutes, () => []).add(valuePicker(p)!);
+    }
+    final spots = [
+      for (final e in byMinute.entries)
+        FlSpot(e.key.toDouble(), e.value.reduce((a, b) => a + b) / e.value.length),
+    ];
+    final maxX = spots.map((s) => s.x).reduce((a, b) => a > b ? a : b) + 1;
+    return SizedBox(
+      height: 180,
+      child: LineChart(
+        LineChartData(
+          minX: 0,
+          maxX: maxX,
+          minY: minY,
+          maxY: maxY,
+          gridData: _grid(t),
+          titlesData: FlTitlesData(
+            topTitles: _hiddenAxis(),
+            rightTitles: _hiddenAxis(),
+            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 32, getTitlesWidget: (v, _) => Text('${v.round()}$unit', style: const TextStyle(fontSize: 9, color: _axisLabelColor)))),
+            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, interval: 5, getTitlesWidget: (v, _) => _bottomTitle('${v.round()}m'))),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: true,
+              barWidth: 2,
+              color: color,
+              dotData: FlDotData(show: spots.length <= 20),
+              belowBarData: BarAreaData(show: true, color: color.withOpacity(0.08)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

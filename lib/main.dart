@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'app.dart';
 import 'core/app_state.dart';
+import 'core/live_service.dart';
 
 void main() {
   initializeDateFormatting();
@@ -18,7 +19,10 @@ class MineTrackAppRoot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => AppState())],
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppState()),
+        ChangeNotifierProvider(create: (_) => LiveService()),
+      ],
       child: const MineTrackApp(),
     );
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart' hide Badge;
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
+import '../core/live_service.dart';
+import '../core/worker_mapper.dart';
 import '../models/worker.dart';
 import '../widgets/badge.dart';
 import '../widgets/mine_map.dart';
@@ -17,35 +19,48 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
   Worker? _hovered;
   Worker? _selected;
   String? _layer; // null | "heatmap" | "gas"
+  String _search = '';
 
   @override
   Widget build(BuildContext context) {
+    final live = context.watch<LiveService>();
+    // Map live miners onto the map model; the search box filters dots + list.
+    final all = live.state.miners.map((m) => workerFromMiner(m)).toList();
+    final workers = _search.isEmpty
+        ? all
+        : all
+            .where((w) =>
+                w.name.toLowerCase().contains(_search) ||
+                w.bleTag.toLowerCase().contains(_search) ||
+                w.zone.toLowerCase().contains(_search))
+            .toList();
+
     return LayoutBuilder(
       builder: (context, c) {
         final wide = c.maxWidth > 760;
         return Container(
           color: const Color(0xFF05101E),
-          child: wide ? _row(c) : _column(c),
+          child: wide ? _row(workers, live) : _column(workers, live),
         );
       },
     );
   }
 
-  Widget _row(BoxConstraints c) => Row(
+  Widget _row(List<Worker> workers, LiveService live) => Row(
         children: [
-          Expanded(child: _mapArea()),
-          SizedBox(width: 288, child: _drawer()),
+          Expanded(child: _mapArea(workers, live)),
+          SizedBox(width: 288, child: _drawer(workers, live)),
         ],
       );
 
-  Widget _column(BoxConstraints c) => Column(
+  Widget _column(List<Worker> workers, LiveService live) => Column(
         children: [
-          Expanded(flex: 3, child: _mapArea()),
-          Expanded(flex: 2, child: _drawer()),
+          Expanded(flex: 3, child: _mapArea(workers, live)),
+          Expanded(flex: 2, child: _drawer(workers, live)),
         ],
       );
 
-  Widget _mapArea() {
+  Widget _mapArea(List<Worker> workers, LiveService live) {
     return Column(
       children: [
         // Controls bar
@@ -66,15 +81,15 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                       const Text('COMMAND CENTRE',
                           style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
                       const SizedBox(width: 8),
-                      _livePill(),
+                      _livePill(live.status),
                       const Spacer(),
                       Flexible(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 160),
+                          constraints: const BoxConstraints(maxWidth: 180),
                           child: TextField(
                             style: const TextStyle(color: Colors.white, fontSize: 12),
                             decoration: InputDecoration(
-                              hintText: 'Search worker…',
+                              hintText: 'Search worker or tag…',
                               hintStyle: TextStyle(color: const Color(0xFF60A5FA).withOpacity(0.5)),
                               prefixIcon: Icon(Icons.search, size: 12, color: const Color(0xFF60A5FA)),
                               filled: true,
@@ -90,6 +105,7 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                               isDense: true,
                               contentPadding: const EdgeInsets.symmetric(vertical: 6),
                             ),
+                            onChanged: (v) => setState(() => _search = v.toLowerCase()),
                           ),
                         ),
                       ),
@@ -106,24 +122,6 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                           child: _layerBtn(l, sel),
                         );
                       }),
-                      const SizedBox(width: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white.withOpacity(0.1)),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            IconButton(icon: const Icon(Icons.add, color: Colors.white, size: 16), onPressed: () {}, splashRadius: 14),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              decoration: BoxDecoration(border: Border.symmetric(vertical: BorderSide(color: Colors.white.withOpacity(0.1)))),
-                              child: const Text('100%', style: TextStyle(color: Color(0xFF93C5FD), fontSize: 11)),
-                            ),
-                            IconButton(icon: const Icon(Icons.remove, color: Colors.white, size: 16), onPressed: () {}, splashRadius: 14),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ],
@@ -137,6 +135,8 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
             children: [
               Positioned.fill(
                 child: MineMap(
+                  workers: workers,
+                  gateways: live.state.gateways,
                   hoveredWorker: _hovered,
                   selectedWorker: _selected,
                   layer: _layer,
@@ -158,10 +158,10 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                 child: Wrap(
                   spacing: 8,
                   children: [
-                    _stat('Underground', workers.length, const Color(0xFF3B82F6)),
-                    _stat('Emergency', workers.where((w) => w.status == WorkerStatus.emergency).length, const Color(0xFFEF4444)),
-                    _stat('Low Battery', workers.where((w) => w.battery < 20).length, const Color(0xFFF59E0B)),
-                    _stat('Gateways OK', gateways.where((g) => g.online).length, const Color(0xFF22C55E)),
+                    _stat('Underground', live.state.totalMiners, const Color(0xFF3B82F6)),
+                    _stat('Emergency', live.state.alerts.where((a) => a.type == 'critical' || a.type == 'danger').length, const Color(0xFFEF4444)),
+                    _stat('Low Battery', live.state.miners.where((m) => (m.battery ?? 100) < 20).length, const Color(0xFFF59E0B)),
+                    _stat('Gateways Live', live.state.gateways.length, const Color(0xFF22C55E)),
                   ],
                 ),
               ),
@@ -207,24 +207,31 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
     );
   }
 
-  Widget _livePill() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: const Color(0x4D22C55E),
-          border: Border.all(color: const Color(0x6622C55E)),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            _Blink(),
-            SizedBox(width: 5),
-            Text('LIVE', style: TextStyle(color: Color(0xFF4ADE80), fontSize: 11, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      );
+  Widget _livePill(ConnStatus status) {
+    final (color, label) = switch (status) {
+      ConnStatus.live => (const Color(0xFF4ADE80), 'LIVE'),
+      ConnStatus.connecting => (const Color(0xFFFBBF24), 'CONNECTING'),
+      ConnStatus.offline => (const Color(0xFFF87171), 'OFFLINE'),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        border: Border.all(color: color.withOpacity(0.4)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _Blink(color: color, animate: status == ConnStatus.live),
+          const SizedBox(width: 5),
+          Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
 
-  Widget _drawer() {
+  Widget _drawer(List<Worker> workers, LiveService live) {
     return Container(
       color: const Color(0xFF0B1F3A),
       child: Column(
@@ -232,9 +239,9 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x11FFFFFF)))),
-            child: Column(
+            child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+              children: [
                 Text('Worker Details', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
                 Text('Click a dot to select', style: TextStyle(color: Color(0x9960A5FA), fontSize: 11)),
               ],
@@ -250,11 +257,17 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                   children: [
                     Icon(Icons.location_on, size: 32, color: const Color(0xFF1E3A8A).withOpacity(0.8)),
                     const SizedBox(height: 12),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 24),
-                      child: Text('Hover over a worker dot on the map to view details',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0x9960A5FA), fontSize: 13)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        live.status == ConnStatus.offline
+                            ? 'Backend offline — waiting for the connection to restore'
+                            : workers.isEmpty
+                                ? 'No tags reporting yet — waiting for BLE telemetry'
+                                : 'Hover over a worker dot on the map to view details',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0x9960A5FA), fontSize: 13),
+                      ),
                     ),
                   ],
                 ),
@@ -270,7 +283,7 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                 const Text('ALL UNDERGROUND',
                     style: TextStyle(color: Color(0x9960A5FA), fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 1.5)),
                 const SizedBox(height: 8),
-                ...workers.take(6).map((w) => _personnelBtn(w)),
+                ...workers.take(8).map(_personnelBtn),
               ],
             ),
           ),
@@ -300,7 +313,7 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
             Container(width: 8, height: 8, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
             const SizedBox(width: 8),
             Expanded(child: Text(w.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 12))),
-            Text(w.zone.split(' ').take(2).join(' '),
+            Text(w.zone,
                 style: const TextStyle(color: Color(0x8060A5FA), fontSize: 10)),
           ],
         ),
@@ -311,15 +324,12 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
   Widget _selectedBody() {
     final w = _selected!;
     final rows = <(String, String)>[
-      ("Current Zone", w.zone),
-      ("BLE Tag", w.bleTag),
-      ("Nearest Gateway", w.gateway),
-      ("Signal", "${w.signal} dBm"),
-      ("Battery", "${w.battery}%"),
-      ("Last Movement", w.lastSeen),
-      ("Shift", w.shift),
-      ("Nearest Exit", "Main Shaft · 180m"),
-      ("Est. Evacuation", "~4 min"),
+      ('Current Zone', w.zone),
+      ('BLE Tag', w.bleTag),
+      ('Nearest Gateway', w.gateway),
+      ('Signal', '${w.signal} dBm'),
+      ('Battery', '${w.battery}%'),
+      ('Last Movement', w.lastSeen),
     ];
     final battColor = w.battery > 60 ? const Color(0xFF22C55E) : w.battery > 30 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444);
     return SingleChildScrollView(
@@ -341,7 +351,7 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(w.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                    Text('${w.empNo} · ${w.dept}', style: const TextStyle(color: Color(0xFF60A5FA), fontSize: 12)),
+                    Text(w.empNo, style: const TextStyle(color: Color(0xFF60A5FA), fontSize: 12, fontFamily: 'monospace')),
                     const SizedBox(height: 4),
                     Badge(label: w.status.label, color: w.status == WorkerStatus.emergency ? BadgeColor.red : w.status == WorkerStatus.moving ? BadgeColor.blue : BadgeColor.gray),
                   ],
@@ -377,26 +387,6 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
             ),
           ),
           Align(alignment: Alignment.centerRight, child: Text('${w.battery}%', style: TextStyle(color: battColor, fontSize: 12))),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(onPressed: () {}, child: const Text('Track')),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Color(0x33FFFFFF)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: () {},
-                  child: const Text('Message'),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -404,17 +394,45 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
 }
 
 class _Blink extends StatefulWidget {
-  const _Blink();
+  final Color color;
+  final bool animate;
+  const _Blink({this.color = const Color(0xFF4ADE80), this.animate = true});
   @override
   State<_Blink> createState() => _BlinkState();
 }
 
 class _BlinkState extends State<_Blink> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
+  bool _animating = false;
+
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _Blink oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _syncMotion();
+  }
+
+  void _syncMotion() {
+    // Honor the platform "reduce motion" setting: steady dot instead of blinking.
+    final shouldAnimate = widget.animate && !MediaQuery.of(context).disableAnimations;
+    if (shouldAnimate && !_animating) {
+      _c.repeat(reverse: true);
+      _animating = true;
+    } else if (!shouldAnimate && _animating) {
+      _c.stop();
+      _animating = false;
+    }
   }
 
   @override
@@ -428,7 +446,7 @@ class _BlinkState extends State<_Blink> with SingleTickerProviderStateMixin {
         animation: _c,
         builder: (_, __) => Opacity(
           opacity: 0.4 + 0.6 * _c.value,
-          child: Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF4ADE80), shape: BoxShape.circle)),
+          child: Container(width: 6, height: 6, decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)),
         ),
       );
 }

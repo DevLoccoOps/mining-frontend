@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart' hide Badge;
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
-import '../models/alert_item.dart';
+import '../core/live_service.dart';
+import '../models/api_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/badge.dart';
 import '../widgets/kpi_card.dart';
@@ -15,33 +16,61 @@ class AlertsPage extends StatefulWidget {
 
 class _AlertsPageState extends State<AlertsPage> {
   String _severity = 'All';
-  String _type = 'All';
-  final _types = ['All', 'Emergency', 'Gas', 'Medical', 'Battery', 'Gateway', 'Communication', 'Geofence', 'SOS'];
+  String _category = 'All';
 
-  List<AlertItem> _filtered() {
-    return alerts.where((a) {
-      final ms = _severity == 'All' || a.severity.label == _severity.toLowerCase();
-      final mt = _type == 'All' || a.type == _type;
+  /// Maps a backend alert_type to the UI severity scale.
+  static String _severityOf(AlertLogRecord a) {
+    switch (a.alertType) {
+      case 'critical':
+        return 'critical';
+      case 'danger':
+        return 'warning';
+      default:
+        return 'info';
+    }
+  }
+
+  /// Derives a human category from the alert message (the backend's alert_type
+  /// only carries the severity level).
+  static String _categoryOf(AlertLogRecord a) {
+    final msg = (a.alertMsg ?? '').toUpperCase();
+    if (msg.contains('HEAT')) return 'Heat';
+    if (msg.contains('FALL')) return 'Fall';
+    if (msg.contains('IMMOBIL')) return 'Immobility';
+    if (msg.contains('BATTERY')) return 'Battery';
+    if (msg.contains('UNREGISTERED')) return 'Tag';
+    if (msg.contains('GAS')) return 'Gas';
+    return 'Other';
+  }
+
+  List<AlertLogRecord> _filtered(List<AlertLogRecord> logs) {
+    return logs.where((a) {
+      final ms = _severity == 'All' || _severityOf(a) == _severity.toLowerCase();
+      final mt = _category == 'All' || _categoryOf(a) == _category;
       return ms && mt;
     }).toList();
   }
 
-  BadgeColor _severityColor(AlertSeverity s) {
-    if (s == AlertSeverity.critical) return BadgeColor.red;
-    if (s == AlertSeverity.warning) return BadgeColor.yellow;
-    return BadgeColor.blue;
-  }
-
-  BadgeColor _statusColor(AlertStatus s) {
-    if (s == AlertStatus.open) return BadgeColor.red;
-    if (s == AlertStatus.inProgress) return BadgeColor.yellow;
-    return BadgeColor.green;
+  BadgeColor _severityColor(String severity) {
+    switch (severity) {
+      case 'critical':
+        return BadgeColor.red;
+      case 'warning':
+        return BadgeColor.yellow;
+      default:
+        return BadgeColor.blue;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final filtered = _filtered();
+    final live = context.watch<LiveService>();
+    final logs = live.logs;
+    final activeNow = live.state.alerts.length;
+    final filtered = _filtered(logs);
+    final categories = ['All', ...logs.map(_categoryOf).toSet()..remove('All')];
+
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -51,7 +80,12 @@ class _AlertsPageState extends State<AlertsPage> {
             children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Alerts & Incident Management', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: t.fg)),
-                Text('${alerts.where((a) => a.status != AlertStatus.closed).length} active incidents', style: TextStyle(fontSize: 13, color: t.muted)),
+                Text(
+                  activeNow > 0
+                      ? '$activeNow active live incident${activeNow == 1 ? '' : 's'} · ${logs.length} logged'
+                      : '${logs.length} logged alert${logs.length == 1 ? '' : 's'}',
+                  style: TextStyle(fontSize: 13, color: t.muted),
+                ),
               ]),
               const Spacer(),
               OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.download, size: 14), label: const Text('Export Report')),
@@ -63,11 +97,16 @@ class _AlertsPageState extends State<AlertsPage> {
             builder: (context, c) {
               final cols = c.maxWidth > 760 ? 4 : 2;
               const spacing = 12.0;
+              final crit = logs.where((a) => _severityOf(a) == 'critical').length;
+              final warn = logs.where((a) => _severityOf(a) == 'warning').length;
+              final lastHour = logs
+                  .where((a) => a.createdAt != null && DateTime.now().difference(a.createdAt!) <= const Duration(hours: 1))
+                  .length;
               final cards = [
-                KpiCard(icon: Icons.warning_amber_rounded, label: 'Critical', value: '${alerts.where((a) => a.severity == AlertSeverity.critical).length}', color: KpiColor.red),
-                KpiCard(icon: Icons.error_outline, label: 'Warnings', value: '${alerts.where((a) => a.severity == AlertSeverity.warning).length}', color: KpiColor.yellow),
-                KpiCard(icon: Icons.cancel, label: 'Open', value: '${alerts.where((a) => a.status == AlertStatus.open).length}', color: KpiColor.red),
-                KpiCard(icon: Icons.check_circle, label: 'Resolved', value: '${alerts.where((a) => a.status == AlertStatus.closed).length}', color: KpiColor.green),
+                KpiCard(icon: Icons.warning_amber_rounded, label: 'Critical', value: '$crit', color: KpiColor.red),
+                KpiCard(icon: Icons.error_outline, label: 'Warnings', value: '$warn', color: KpiColor.yellow),
+                KpiCard(icon: Icons.schedule, label: 'Last Hour', value: '$lastHour', color: KpiColor.blue),
+                KpiCard(icon: Icons.inventory_2_outlined, label: 'Total Logged', value: '${logs.length}', color: KpiColor.green),
               ];
               final List<Widget> rows = [];
               for (var i = 0; i < cards.length; i += cols) {
@@ -103,34 +142,59 @@ class _AlertsPageState extends State<AlertsPage> {
                 ...['All', 'Critical', 'Warning', 'Info'].map((s) => _pill(s, _severity, (v) => setState(() => _severity = v), t)),
                 const SizedBox(width: 12),
                 _label('Type:', t),
-                ..._types.map((s) => _pill(s, _type, (v) => setState(() => _type = v), t)),
+                ...categories.map((s) => _pill(s, _category, (v) => setState(() => _category = v), t)),
               ],
             ),
           ),
           const SizedBox(height: 20),
           // Alert list
           Expanded(
-            child: ListView.separated(
-              itemCount: filtered.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (_, i) => _alertCard(filtered[i], t),
-            ),
+            child: filtered.isEmpty
+                ? _emptyState(t, live)
+                : ListView.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, i) => _alertCard(filtered[i], t),
+                  ),
           ),
         ],
       ),
     );
   }
 
-  Widget _alertCard(AlertItem a, SurfaceTokens t) {
-    final Color tintBorder;
-    if (a.severity == AlertSeverity.critical) {
-      tintBorder = t.isDark ? const Color(0x66EF4444) : const Color(0xFFE5A0A0);
-    } else if (a.severity == AlertSeverity.warning) {
-      tintBorder = t.isDark ? const Color(0x66F59E0B) : const Color(0xFFFDE68A);
-    } else {
-      tintBorder = t.border;
-    }
-    final iconColor = a.severity == AlertSeverity.critical ? AppColors.red : a.severity == AlertSeverity.warning ? AppColors.amber : AppColors.blue;
+  Widget _emptyState(SurfaceTokens t, LiveService live) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.verified_outlined, size: 40, color: t.muted),
+          const SizedBox(height: 12),
+          Text('No alerts match', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: t.fg)),
+          const SizedBox(height: 4),
+          Text(
+            live.status == ConnStatus.offline
+                ? 'Backend offline — reconnecting…'
+                : 'Nothing logged' + (live.status == ConnStatus.live ? ' — the safety engine is quiet' : ''),
+            style: TextStyle(fontSize: 12, color: t.muted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _alertCard(AlertLogRecord a, SurfaceTokens t) {
+    final severity = _severityOf(a);
+    final iconColor = severity == 'critical'
+        ? AppColors.red
+        : severity == 'warning'
+            ? AppColors.amber
+            : AppColors.blue;
+    final tintBorder = switch (severity) {
+      'critical' => t.isDark ? const Color(0x66EF4444) : const Color(0xFFE5A0A0),
+      'warning' => t.isDark ? const Color(0x66F59E0B) : const Color(0xFFFDE68A),
+      _ => t.border,
+    };
+    final who = a.minerName ?? a.mac;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -156,43 +220,39 @@ class _AlertsPageState extends State<AlertsPage> {
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Badge(label: a.type, color: _severityColor(a.severity)),
-                    Badge(label: a.status.label, color: _statusColor(a.status)),
-                    if (a.assigned != null)
-                      Text('→ ${a.assigned}', style: TextStyle(fontSize: 12, color: t.muted)),
+                    Badge(label: _categoryOf(a), color: _severityColor(severity)),
+                    Badge(label: severity.toUpperCase(), color: _severityColor(severity)),
+                    Text(who, style: TextStyle(fontSize: 12, color: t.muted, fontFamily: 'monospace')),
                     Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.history, size: 10, color: t.muted),
                       const SizedBox(width: 4),
-                      Text(a.time, style: TextStyle(fontSize: 12, color: t.muted)),
+                      Text(a.createdAt != null ? timeAgo(a.createdAt!) : 'unknown time', style: TextStyle(fontSize: 12, color: t.muted)),
                     ]),
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(a.message, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: t.fg)),
+                Text(a.alertMsg ?? 'Alert raised', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: t.fg)),
                 const SizedBox(height: 4),
                 Row(children: [
                   Icon(Icons.location_on, size: 10, color: t.muted),
                   const SizedBox(width: 4),
-                  Text(a.location, style: TextStyle(fontSize: 12, color: t.muted)),
+                  Text(a.zone ?? 'unknown zone', style: TextStyle(fontSize: 12, color: t.muted)),
+                  if (a.tempC != null) ...[
+                    const SizedBox(width: 12),
+                    Icon(Icons.thermostat, size: 10, color: t.muted),
+                    const SizedBox(width: 4),
+                    Text('${a.tempC!.toStringAsFixed(1)}°C', style: TextStyle(fontSize: 12, color: t.muted)),
+                  ],
+                  if (a.battery != null) ...[
+                    const SizedBox(width: 12),
+                    Icon(Icons.battery_std, size: 10, color: t.muted),
+                    const SizedBox(width: 4),
+                    Text('${a.battery}%', style: TextStyle(fontSize: 12, color: t.muted)),
+                  ],
                 ]),
               ],
             ),
           ),
-          if (a.status != AlertStatus.closed)
-            Flexible(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: ElevatedButton(onPressed: () {}, child: const Text('Assign')),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: OutlinedButton(onPressed: () {}, child: const Text('Close')),
-                  ),
-                ],
-              ),
-            ),
         ],
       ),
     );

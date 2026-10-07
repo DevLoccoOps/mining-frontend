@@ -1,44 +1,47 @@
 import 'package:flutter/material.dart' hide Badge;
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
+import '../core/live_service.dart';
+import '../models/chart_data.dart';
 import '../theme/app_theme.dart';
+import '../utils/csv_export.dart';
 import '../widgets/badge.dart';
 import '../widgets/charts.dart';
 
-class ReportsPage extends StatefulWidget {
+/// Reports & Analytics — an operational summary of the current live state,
+/// plus the recent alert log, generated from real backend data.
+class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key});
-
-  @override
-  State<ReportsPage> createState() => _ReportsPageState();
-}
-
-class _ReportsPageState extends State<ReportsPage> {
-  String _active = 'daily';
-  final _reports = [
-    ('daily', 'Daily Personnel'),
-    ('shift', 'Shift Report'),
-    ('attendance', 'Attendance'),
-    ('movement', 'Movement History'),
-    ('tag', 'Tag Utilisation'),
-    ('gateway', 'Gateway Uptime'),
-    ('battery', 'Battery Health'),
-    ('evacuation', 'Evacuation Drill'),
-  ];
 
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final generated = DateFormat('d/M/y', 'en_ZA').format(DateTime.now());
+    final live = context.watch<LiveService>();
+    final state = live.state;
+    final generated = DateFormat('d/M/y HH:mm', 'en_ZA').format(DateTime.now());
     final summaryDate = DateFormat('EEEE, d MMMM y', 'en_ZA').format(DateTime.now());
-    final summary = [
-      ('Total Personnel Underground', '11', '≤ 50', 'Met'),
-      ('Active BLE Tags', '20 / 28', '≥ 18', 'Met'),
-      ('Gateway Uptime', '90%', '≥ 95%', 'Warning'),
-      ('Emergency Alerts', '2', '0', 'Critical'),
-      ('Battery Warnings', '4', '0', 'Warning'),
-      ('Avg Signal Strength', '-62 dBm', '≥ -70 dBm', 'Met'),
+
+    final miners = state.miners;
+    final lowBattery = miners.where((m) => (m.battery ?? 100) < 20).length;
+    final emergencyAlerts = state.alerts.where((a) => a.type == 'critical' || a.type == 'danger').length;
+    final activeGw = state.gateways.length;
+    final rssiValues = miners.map((m) => m.rssi).toList();
+    final avgRssi = rssiValues.isEmpty
+        ? null
+        : rssiValues.reduce((a, b) => a + b) / rssiValues.length;
+    final batteries = miners.map((m) => m.battery).whereType<int>().toList();
+
+    // Metric / value / target / status
+    final summary = <(String, String, String, String)>[
+      ('Personnel Underground', '${state.totalMiners}', '≤ 50', state.totalMiners <= 50 ? 'Met' : 'Critical'),
+      ('Tags Reporting', '${miners.length} / ${live.tags.length}', 'all registered tags', miners.length >= live.tags.length ? 'Met' : 'Warning'),
+      ('Gateways Seen', '$activeGw', '≥ 1 per zone', activeGw > 0 ? 'Met' : 'Critical'),
+      ('Emergency Alerts', '$emergencyAlerts', '0', emergencyAlerts == 0 ? 'Met' : 'Critical'),
+      ('Battery Warnings', '$lowBattery', '0', lowBattery == 0 ? 'Met' : 'Warning'),
+      ('Avg Signal Strength', avgRssi != null ? '${avgRssi.toStringAsFixed(0)} dBm' : '—', '≥ -70 dBm', (avgRssi ?? 0) >= -70 ? 'Met' : 'Warning'),
     ];
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -52,52 +55,40 @@ class _ReportsPageState extends State<ReportsPage> {
                 Text('Generated: $generated', style: TextStyle(fontSize: 13, color: t.muted)),
               ]),
               const Spacer(),
-              OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.download, size: 14), label: const Text('Export PDF')),
-              const SizedBox(width: 12),
               ElevatedButton.icon(
-                onPressed: () {},
+                onPressed: () => _exportCsv(context, live),
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.green),
                 icon: const Icon(Icons.download, size: 14),
-                label: const Text('Export Excel'),
+                label: const Text('Export Alert Log (CSV)'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          // Tabs
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _reports
-                .map((r) => Material(
-                      color: _active == r.$1 ? AppColors.blue : t.card,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: _active == r.$1 ? AppColors.blue : t.border),
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => setState(() => _active = r.$1),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Text(r.$2,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                  color: _active == r.$1 ? Colors.white : t.muted)),
-                        ),
-                      ),
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 20),
-          // Charts — responsive rows; cards size to content (page scrolls).
-          // The chart set changes with the selected report category so clicking
-          // a tab visibly updates the graphs.
+          // Charts — live telemetry + zone distribution
           LayoutBuilder(
             builder: (context, c) {
               final cols = c.maxWidth > 1024 ? 2 : 1;
               const spacing = 20.0;
-              final cards = _chartsFor(t);
+              final cards = [
+                _card(t, 'Temperature — recent telemetry', TelemetryTrendChart(
+                  readings: live.telemetry,
+                  valuePicker: (r) => r.tempC,
+                  color: AppColors.red,
+                  maxY: 45,
+                  unit: '°',
+                )),
+                _card(t, 'Worker Distribution — live zones', WorkerDistributionBar(
+                  data: state.zones.map((z) => ZoneCount(z.zone, z.total)).toList()..sort((a, b) => b.n.compareTo(a.n)),
+                )),
+                _card(t, 'Signal Strength — recent telemetry', TelemetryTrendChart(
+                  readings: live.telemetry,
+                  valuePicker: (r) => r.rssi,
+                  color: AppColors.blue,
+                  minY: -100,
+                  maxY: 0,
+                )),
+                _batteryCard(t, batteries),
+              ];
               final List<Widget> rows = [];
               for (var i = 0; i < cards.length; i += cols) {
                 final rowChildren = <Widget>[];
@@ -136,7 +127,7 @@ class _ReportsPageState extends State<ReportsPage> {
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
                     columnSpacing: 16,
-                    headingRowColor: MaterialStateProperty.all(t.mutedBg.withOpacity(0.4)),
+                    headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
                     columns: ['Metric', 'Value', 'Target', 'Status']
                         .map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted))))
                         .toList(),
@@ -153,83 +144,64 @@ class _ReportsPageState extends State<ReportsPage> {
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          // Alert log
+          Container(
+            decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Text('Alert Log (latest ${live.logs.take(50).length})', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columnSpacing: 16,
+                    headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
+                    columns: ['Time', 'Personnel / Tag', 'Zone', 'Type', 'Message']
+                        .map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted))))
+                        .toList(),
+                    rows: live.logs.take(50).isEmpty
+                        ? [
+                            DataRow(cells: [
+                              DataCell(Text('No alerts logged', style: TextStyle(fontSize: 12, color: t.muted))),
+                              ...List.filled(4, const DataCell(SizedBox())),
+                            ]),
+                          ]
+                        : live.logs
+                            .take(50)
+                            .map((a) => DataRow(cells: [
+                                  DataCell(Text(a.createdAt != null ? DateFormat('d/M HH:mm:ss', 'en_ZA').format(a.createdAt!) : '—',
+                                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
+                                  DataCell(Text(a.minerName ?? a.mac, style: TextStyle(fontSize: 11, color: t.fg))),
+                                  DataCell(Text(a.zone ?? '—', style: TextStyle(fontSize: 11, color: t.muted))),
+                                  DataCell(Badge(
+                                      label: a.alertType ?? 'warning',
+                                      color: a.alertType == 'critical'
+                                          ? BadgeColor.red
+                                          : a.alertType == 'danger'
+                                              ? BadgeColor.yellow
+                                              : BadgeColor.blue)),
+                                  DataCell(Text(a.alertMsg ?? '', style: TextStyle(fontSize: 11, color: t.fg))),
+                                ]))
+                            .toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// Returns a distinct set of chart cards for the currently selected report
-  /// category, so clicking a tab visibly changes the graphs.
-  List<Widget> _chartsFor(SurfaceTokens t) {
-    switch (_active) {
-      case 'daily':
-        return [
-          _card('Personnel Underground — Today', const PersonnelAreaChart()),
-          _card('Avg Signal Strength', const SignalAreaChart()),
-          _card('Worker Distribution', const WorkerDistributionBar()),
-          _batteryCard(t),
-        ];
-      case 'shift':
-        return [
-          _card('Personnel On Shift', const PersonnelAreaChart(green: true)),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-          _card('Signal Strength Trend', const SignalLineChart()),
-          _batteryCard(t),
-        ];
-      case 'attendance':
-        return [
-          _card('Headcount by Zone', const WorkerDistributionBar()),
-          _card('Attendance Over Day', const PersonnelAreaChart()),
-          _card('Avg Signal Strength', const SignalAreaChart()),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-        ];
-      case 'movement':
-        return [
-          _card('Movement / Signal Trend', const SignalLineChart()),
-          _card('Movements by Zone', const WorkerDistributionBar()),
-          _card('Personnel Underground', const PersonnelAreaChart()),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-        ];
-      case 'tag':
-        return [
-          _batteryCard(t),
-          _card('Tag Signal Strength', const SignalAreaChart()),
-          _card('Tags by Zone', const WorkerDistributionBar()),
-          _card('Active Tags', const PersonnelAreaChart(green: true)),
-        ];
-      case 'gateway':
-        return [
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-          _card('Signal Strength Trend', const SignalLineChart()),
-          _card('Avg Signal Strength', const SignalAreaChart()),
-          _card('Worker Distribution', const WorkerDistributionBar()),
-        ];
-      case 'battery':
-        return [
-          _batteryCard(t),
-          _card('Signal vs Battery', const SignalAreaChart()),
-          _card('Personnel Underground', const PersonnelAreaChart()),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-        ];
-      case 'evacuation':
-        return [
-          _card('Personnel Evacuated', const PersonnelAreaChart(green: true)),
-          _card('Personnel by Zone', const WorkerDistributionBar()),
-          _card('Signal Coverage', const SignalAreaChart()),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-        ];
-      default:
-        return [
-          _card('Personnel Underground — Today', const PersonnelAreaChart()),
-          _card('Gateway Uptime (%)', const GatewayUptimeBar()),
-          _batteryCard(t),
-          _card('Signal Strength Trend', const SignalLineChart()),
-        ];
-    }
-  }
-
-  Widget _card(String title, Widget chart) {
-    final t = tokensOf(context);
+  Widget _card(SurfaceTokens t, String title, Widget chart) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
@@ -245,7 +217,16 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  Widget _batteryCard(SurfaceTokens t) {
+  Widget _batteryCard(SurfaceTokens t, List<int> batteries) {
+    final slices = batteries.isEmpty
+        ? const <BatterySlice>[]
+        : [
+            BatterySlice('80-100%', batteries.where((b) => b >= 80).length, 0xFF22C55E),
+            BatterySlice('60-79%', batteries.where((b) => b >= 60 && b < 80).length, 0xFF3B82F6),
+            BatterySlice('40-59%', batteries.where((b) => b >= 40 && b < 60).length, 0xFFF59E0B),
+            BatterySlice('20-39%', batteries.where((b) => b >= 20 && b < 40).length, 0xFFEF4444),
+            BatterySlice('<20%', batteries.where((b) => b < 20).length, 0xFF7C3AED),
+          ].where((s) => s.value > 0).toList();
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
@@ -255,32 +236,47 @@ class _ReportsPageState extends State<ReportsPage> {
         children: [
           Text('Battery Distribution', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(flex: 1, child: const BatteryDonut(size: 180, inner: 45, outer: 75)),
-              const SizedBox(width: 24),
-              Expanded(
-                flex: 1,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: batteryPie
-                      .map((d) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            child: Row(children: [
-                              Container(width: 10, height: 10, decoration: BoxDecoration(color: Color(d.color), shape: BoxShape.circle)),
-                              const SizedBox(width: 10),
-                              Text(d.name, style: TextStyle(fontSize: 12, color: t.muted)),
-                              const Spacer(),
-                              Text('${d.value} tags', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
-                            ]),
-                          ))
-                      .toList(),
+          if (slices.isEmpty)
+            SizedBox(height: 180, child: Center(child: Text('No battery readings yet', style: TextStyle(fontSize: 12, color: t.muted))))
+          else
+            Row(
+              children: [
+                Expanded(flex: 1, child: BatteryDonut(size: 180, inner: 45, outer: 75, data: slices)),
+                const SizedBox(width: 24),
+                Expanded(
+                  flex: 1,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: slices
+                        .map((d) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(children: [
+                                Container(width: 10, height: 10, decoration: BoxDecoration(color: Color(d.color), shape: BoxShape.circle)),
+                                const SizedBox(width: 10),
+                                Text(d.name, style: TextStyle(fontSize: 12, color: t.muted)),
+                                const Spacer(),
+                                Text('${d.value} tags', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg)),
+                              ]),
+                            ))
+                        .toList(),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
     );
+  }
+
+  /// Downloads the current alert log as a CSV file (web: triggers a download).
+  void _exportCsv(BuildContext context, LiveService live) {
+    final buffer = StringBuffer('id,time,mac,name,zone,temp_c,battery,type,message\n');
+    for (final a in live.logs) {
+      final time = a.createdAt?.toIso8601String() ?? '';
+      final esc = (String? s) => (s ?? '').replaceAll('"', '""');
+      buffer.writeln('"${a.id}","$time","${esc(a.mac)}","${esc(a.minerName)}","${esc(a.zone)}",'
+          '${a.tempC ?? ''},${a.battery ?? ''},"${esc(a.alertType)}","${esc(a.alertMsg)}"');
+    }
+    downloadFileWeb('alert_log.csv', buffer.toString().codeUnits);
   }
 }

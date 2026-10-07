@@ -3,7 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../models/api_models.dart';
 import '../models/worker.dart';
 
 /// Interactive mine map. viewBox 820 x 520 (matches the original SVG).
@@ -14,6 +14,13 @@ class MineMap extends StatefulWidget {
   final ValueChanged<Worker>? onTap;
   final String? layer; // null | "heatmap" | "gas"
 
+  /// Live personnel dots. Empty = nobody reporting.
+  final List<Worker> workers;
+
+  /// Live gateways; drawn at fixed positions in index order. When empty the
+  /// gateway icons render greyed out instead.
+  final List<GatewayEntry> gateways;
+
   const MineMap({
     super.key,
     this.hoveredWorker,
@@ -21,6 +28,8 @@ class MineMap extends StatefulWidget {
     this.selectedWorker,
     this.onTap,
     this.layer,
+    this.workers = const [],
+    this.gateways = const [],
   });
 
   @override
@@ -66,7 +75,7 @@ class _MineMapState extends State<MineMap> with TickerProviderStateMixin {
   Worker? _hitTest(Offset local, BoxConstraints c) {
     final sx = c.maxWidth / viewW;
     final sy = c.maxHeight / viewH;
-    for (final w in workers) {
+    for (final w in widget.workers) {
       final dx = (local.dx - w.x * sx);
       final dy = (local.dy - w.y * sy);
       if (dx * dx + dy * dy <= (14 * ((sx + sy) / 2)) * (14 * ((sx + sy) / 2))) {
@@ -104,6 +113,8 @@ class _MineMapState extends State<MineMap> with TickerProviderStateMixin {
                   hoveredId: widget.hoveredWorker?.id,
                   selectedId: widget.selectedWorker?.id,
                   layer: widget.layer,
+                  workers: widget.workers,
+                  gateways: widget.gateways,
                 ),
               ),
             ),
@@ -120,6 +131,8 @@ class _MinePainter extends CustomPainter {
   final int? hoveredId;
   final int? selectedId;
   final String? layer;
+  final List<Worker> workers;
+  final List<GatewayEntry> gateways;
 
   _MinePainter({
     required this.pulse,
@@ -127,6 +140,8 @@ class _MinePainter extends CustomPainter {
     this.hoveredId,
     this.selectedId,
     this.layer,
+    this.workers = const [],
+    this.gateways = const [],
   }) : super(repaint: Listenable.merge([pulse, emergency]));
 
   static const tunnelBg = Color(0xFF0E2035);
@@ -250,14 +265,30 @@ class _MinePainter extends CustomPainter {
     _text(canvas, 'ASSEMBLY', const Offset(740, 175), const Color(0xFF86EFAC), 7, bold: true, center: true);
     _text(canvas, 'ASSEMBLY', const Offset(740, 460), const Color(0xFF86EFAC), 7, bold: true, center: true);
 
-    // Gateways
+    // Gateways — fixed icon positions; live ones (per the backend's gateways[])
+    // light up blue with their id, the rest render greyed out.
     const gwPositions = [
       Offset(410, 155), Offset(630, 155), Offset(250, 155),
       Offset(192, 295), Offset(410, 295), Offset(600, 295), Offset(672, 295),
       Offset(300, 440), Offset(560, 440),
     ];
-    for (final p in gwPositions) {
-      _drawGateway(canvas, p);
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final liveGw = <GatewayEntry>{};
+    for (final g in gateways) {
+      liveGw.add(g);
+      final i = gateways.indexOf(g);
+      final p = gwPositions[i % gwPositions.length];
+      final online = now - g.lastSeen < 300;
+      _drawGateway(canvas, p,
+          color: online ? const Color(0xFF22C55E) : const Color(0x665FB8E8));
+      _text(canvas, g.id.replaceFirst('KNOT_', ''), Offset(p.dx, p.dy + 18),
+          online ? const Color(0xFF86EFAC) : const Color(0x8093C5FD), 7,
+          bold: true, center: true);
+    }
+    if (gateways.isEmpty) {
+      for (final p in gwPositions) {
+        _drawGateway(canvas, p, color: const Color(0x335FB8E8));
+      }
     }
 
     // Workers
@@ -347,11 +378,11 @@ class _MinePainter extends CustomPainter {
     );
   }
 
-  void _drawGateway(Canvas c, Offset p) {
+  void _drawGateway(Canvas c, Offset p, {Color color = const Color(0xFF60A5FA)}) {
     c.drawCircle(p, 6, Paint()..color = tunnelBg);
-    c.drawCircle(p, 3, Paint()..color = const Color(0xFF60A5FA));
+    c.drawCircle(p, 3, Paint()..color = color);
     final arcPaint = Paint()
-      ..color = const Color(0xFF60A5FA)
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
@@ -362,7 +393,7 @@ class _MinePainter extends CustomPainter {
     final path2 = Path()
       ..moveTo(p.dx - 10, p.dy - 8)
       ..quadraticBezierTo(p.dx, p.dy - 18, p.dx + 10, p.dy - 8);
-    c.drawPath(path2, arcPaint..color = const Color(0xFF60A5FA).withOpacity(0.55));
+    c.drawPath(path2, arcPaint..color = color.withOpacity(0.55));
   }
 
   void _radial(Canvas c, Offset center, double rx, double ry, Color color) {
@@ -414,7 +445,14 @@ class _MinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _MinePainter old) =>
+      // Repaint on data change — essential when animations are disabled
+      // (reduce-motion) and the controllers no longer drive repaints.
+      !identical(workers, old.workers) ||
+      !identical(gateways, old.gateways) ||
+      hoveredId != old.hoveredId ||
+      selectedId != old.selectedId ||
+      layer != old.layer;
 }
 
 const viewW = 820.0;

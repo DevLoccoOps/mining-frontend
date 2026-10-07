@@ -5,6 +5,9 @@ import '../models/ble_device.dart';
 import '../models/gateway.dart';
 import '../models/recent_event.dart';
 import '../models/worker.dart';
+import '../models/chart_data.dart';
+
+export '../models/chart_data.dart';
 
 final List<Worker> workers = [
   Worker(id: 1, name: "John Smith", empNo: "EMP-001", dept: "Mining", zone: "Tunnel A", bleTag: "TAG-1023", battery: 85, signal: -62, lastSeen: "30s ago", gateway: "KNOT-05", status: WorkerStatus.moving, shift: "Day", x: 192, y: 224),
@@ -81,13 +84,6 @@ final List<BLEDevice> bleDevices = List.generate(28, (i) {
 
 // ── Chart datasets ────────────────────────────────────────────────────────────
 
-class BatterySlice {
-  final String name;
-  final int value;
-  final int color;
-  const BatterySlice(this.name, this.value, this.color);
-}
-
 final List<BatterySlice> batteryPie = [
   BatterySlice("80-100%", 5, 0xFF22C55E),
   BatterySlice("60-79%", 3, 0xFF3B82F6),
@@ -95,12 +91,6 @@ final List<BatterySlice> batteryPie = [
   BatterySlice("20-39%", 1, 0xFFEF4444),
   BatterySlice("<20%", 2, 0xFF7C3AED),
 ];
-
-class ZoneCount {
-  final String zone;
-  final int n;
-  const ZoneCount(this.zone, this.n);
-}
 
 final List<ZoneCount> workerDist = [
   ZoneCount("Tunnel A", 3),

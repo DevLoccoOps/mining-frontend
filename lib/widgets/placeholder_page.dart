@@ -5,7 +5,10 @@ import '../theme/app_theme.dart';
 class PlaceholderPage extends StatelessWidget {
   final String title;
   final IconData icon;
-  const PlaceholderPage({super.key, required this.title, required this.icon});
+
+  /// Honest description of why the module isn't wired yet.
+  final String? message;
+  const PlaceholderPage({super.key, required this.title, required this.icon, this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +28,7 @@ class PlaceholderPage extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 380),
             child: Text(
-              'This module is fully operational. Detailed view for $title is available in the production build.',
+              message ?? 'Detailed view for $title is available in the production build.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: t.muted),
             ),

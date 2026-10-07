@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart' hide Badge;
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
+import '../core/live_service.dart';
+import '../core/worker_mapper.dart';
+import '../models/api_models.dart';
+import '../models/chart_data.dart';
 import '../models/worker.dart';
 import '../theme/app_theme.dart';
 import '../widgets/badge.dart';
@@ -23,7 +27,9 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final onlineGw = gateways.where((g) => g.online).length;
+    final live = context.watch<LiveService>();
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final onlineGw = live.state.gateways.where((g) => now - g.lastSeen < 300).length;
     return Padding(
       padding: const EdgeInsets.all(20),
       child: LayoutBuilder(
@@ -34,13 +40,13 @@ class _DashboardPageState extends State<DashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildKpiGrid(c.maxWidth, onlineGw),
+                _buildKpiGrid(c.maxWidth, onlineGw, live),
                 const SizedBox(height: 20),
-                _mapAndEvents(c, t),
+                _mapAndEvents(c, t, live),
                 const SizedBox(height: 20),
-                _tabbedTable(t),
+                _tabbedTable(t, live),
                 const SizedBox(height: 20),
-                _buildChartGrid(c.maxWidth),
+                _buildChartGrid(c.maxWidth, live),
               ],
             ),
           );
@@ -49,10 +55,10 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildKpiGrid(double width, int onlineGw) {
+  Widget _buildKpiGrid(double width, int onlineGw, LiveService live) {
     final cols = width > 1280 ? 6 : width > 1024 ? 4 : width > 640 ? 3 : 2;
     const spacing = 12.0;
-    final cards = _kpis(onlineGw);
+    final cards = _kpis(onlineGw, live);
 
     final List<Widget> rows = [];
     for (var i = 0; i < cards.length; i += cols) {
@@ -79,14 +85,43 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildChartGrid(double width) {
+  Widget _buildChartGrid(double width, LiveService live) {
     final cols = width > 1280 ? 4 : width > 760 ? 2 : 1;
     const spacing = 20.0;
+
+    // Zone distribution straight from the live state_update broadcast.
+    final zoneData = live.state.zones.map((z) => ZoneCount(z.zone, z.total)).toList()
+      ..sort((a, b) => b.n.compareTo(a.n));
+
+    // Battery health sliced from live per-miner battery readings.
+    final batteries = live.state.miners.map((m) => m.battery).whereType<int>().toList();
+    final batterySlices = batteries.isEmpty
+        ? const <BatterySlice>[]
+        : [
+            BatterySlice('80-100%', batteries.where((b) => b >= 80).length, 0xFF22C55E),
+            BatterySlice('60-79%', batteries.where((b) => b >= 60 && b < 80).length, 0xFF3B82F6),
+            BatterySlice('40-59%', batteries.where((b) => b >= 40 && b < 60).length, 0xFFF59E0B),
+            BatterySlice('20-39%', batteries.where((b) => b >= 20 && b < 40).length, 0xFFEF4444),
+            BatterySlice('<20%', batteries.where((b) => b < 20).length, 0xFF7C3AED),
+          ];
+
     final cards = [
-      _batteryCard(),
-      _card('Worker Distribution', const WorkerDistributionBar()),
-      _card('Avg Signal Strength', const SignalAreaChart()),
-      _card('Personnel Underground', const PersonnelAreaChart(green: true)),
+      _batteryCard(batterySlices),
+      _card('Worker Distribution — live zones', WorkerDistributionBar(data: zoneData)),
+      _card('Temperature — recent telemetry', TelemetryTrendChart(
+        readings: live.telemetry,
+        valuePicker: (r) => r.tempC,
+        color: AppColors.red,
+        maxY: 45,
+        unit: '°',
+      )),
+      _card('Signal Strength — recent telemetry', TelemetryTrendChart(
+        readings: live.telemetry,
+        valuePicker: (r) => r.rssi,
+        color: AppColors.blue,
+        minY: -100,
+        maxY: 0,
+      )),
     ];
 
     final List<Widget> rows = [];
@@ -113,24 +148,36 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  List<Widget> _kpis(int onlineGw) {
+  List<Widget> _kpis(int onlineGw, LiveService live) {
+    final state = live.state;
+    final criticalCount = state.alerts.where((a) => a.type == 'critical' || a.type == 'danger').length;
+    final lowBattery = state.miners.where((m) => (m.battery ?? 100) < 20).length;
+    final assignedTags = live.tags.where((t) => t.assignedTo != null).length;
+
+    // Hottest live zone reading (avg_temp is "N/A" when a zone has no sensors).
+    double? maxTemp;
+    for (final z in state.zones) {
+      final v = double.tryParse(z.avgTemp);
+      if (v != null && (maxTemp == null || v > maxTemp)) maxTemp = v;
+    }
+
     return [
-      KpiCard(icon: Icons.group, label: 'Active Underground', value: '${workers.length}', sub: '+3 since last hour', color: KpiColor.blue, trend: TrendArrow.up),
-      KpiCard(icon: Icons.wifi, label: 'Online Gateways', value: '$onlineGw', sub: '${gateways.length} total', color: KpiColor.green),
-      KpiCard(icon: Icons.wifi_off, label: 'Offline Gateways', value: '${gateways.length - onlineGw}', sub: '1 critical', color: KpiColor.red),
-      KpiCard(icon: Icons.tag, label: 'Registered Tags', value: '28', sub: '20 assigned', color: KpiColor.blue),
-      KpiCard(icon: Icons.battery_alert, label: 'Battery Warnings', value: '4', sub: '2 critical', color: KpiColor.yellow),
-      KpiCard(icon: Icons.warning_amber_rounded, label: 'Emergency Alerts', value: '2', sub: 'Active now', color: KpiColor.red),
-      KpiCard(icon: Icons.person_add_alt, label: 'Visitors Underground', value: '3', sub: 'Escorted', color: KpiColor.teal),
+      // ── Live from the backend ──
+      KpiCard(icon: Icons.group, label: 'Active Underground', value: '${state.totalMiners}', sub: 'Live tags reporting', color: KpiColor.blue),
+      KpiCard(icon: Icons.tag, label: 'Registered Tags', value: '${live.tags.length}', sub: '$assignedTags assigned', color: KpiColor.blue),
+      KpiCard(icon: Icons.warning_amber_rounded, label: 'Emergency Alerts', value: '$criticalCount', sub: criticalCount > 0 ? 'Active now' : 'None active', color: KpiColor.red),
+      KpiCard(icon: Icons.battery_alert, label: 'Battery Warnings', value: '$lowBattery', sub: 'Tags under 20%', color: KpiColor.yellow),
+      if (maxTemp != null) KpiCard(icon: Icons.thermostat, label: 'Max Zone Temp', value: '${maxTemp.toStringAsFixed(1)}°C', sub: 'Live zone average', color: maxTemp > 32 ? KpiColor.red : KpiColor.green),
+      // ── Live gateway liveness (seen = forwarded telemetry in last 5 min) ──
+      KpiCard(icon: Icons.wifi, label: 'Gateways Active', value: '$onlineGw', sub: '${state.gateways.length} seen', color: KpiColor.green),
+      KpiCard(icon: Icons.wifi_off, label: 'Gateways Quiet', value: '${state.gateways.length - onlineGw}', sub: 'no telemetry in 5 min', color: state.gateways.length - onlineGw > 0 ? KpiColor.red : KpiColor.green),
+      // ── Not tracked by the backend ──
       KpiCard(icon: Icons.calendar_month_outlined, label: 'Current Shift', value: 'Day', sub: '06:00 – 18:00', color: KpiColor.blue),
-      KpiCard(icon: Icons.signal_cellular_alt, label: 'Avg Signal Strength', value: '-64 dBm', sub: 'Good', color: KpiColor.green, trend: TrendArrow.up),
-      KpiCard(icon: Icons.thermostat, label: 'Mine Temperature', value: '31°C', sub: 'Level 3 reading', color: KpiColor.yellow),
-      KpiCard(icon: Icons.air, label: 'Gas Sensor Alerts', value: '1', sub: 'Tunnel B — active', color: KpiColor.red),
       KpiCard(icon: Icons.flash_on, label: 'Equipment Tracking', value: '7', sub: 'Active units', color: KpiColor.purple),
     ];
   }
 
-  Widget _mapAndEvents(BoxConstraints c, SurfaceTokens t) {
+  Widget _mapAndEvents(BoxConstraints c, SurfaceTokens t, LiveService live) {
     final wide = c.maxWidth > 1024;
     final mapH = wide ? 440.0 : 320.0;
     if (wide) {
@@ -139,9 +186,9 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(flex: 2, child: _mapCard(t)),
+            Expanded(flex: 2, child: _mapCard(t, live)),
             const SizedBox(width: 20),
-            Expanded(flex: 1, child: _eventsCard(t)),
+            Expanded(flex: 1, child: _eventsCard(t, live)),
           ],
         ),
       );
@@ -149,14 +196,14 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(height: mapH, child: _mapCard(t)),
+        SizedBox(height: mapH, child: _mapCard(t, live)),
         const SizedBox(height: 20),
-        SizedBox(height: mapH, child: _eventsCard(t)),
+        SizedBox(height: mapH, child: _eventsCard(t, live)),
       ],
     );
   }
 
-  Widget _mapCard(SurfaceTokens t) {
+  Widget _mapCard(SurfaceTokens t, LiveService live) {
     return Container(
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
       child: Column(
@@ -172,7 +219,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 Text('Underground Mine Map — Live',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
                 const SizedBox(width: 8),
-                _liveBadge(),
+                _liveBadge(live.status),
                 const Spacer(),
                 IconButton(icon: Icon(Icons.layers, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Map layers'),
                 IconButton(icon: Icon(Icons.refresh, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Refresh map'),
@@ -187,6 +234,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   child: ClipRRect(
                     borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
                     child: MineMap(
+                      workers: live.state.miners.map((m) => workerFromMiner(m)).toList(),
+                      gateways: live.state.gateways,
                       hoveredWorker: _hovered,
                       onHover: (w) => setState(() => _hovered = w),
                     ),
@@ -202,7 +251,8 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _eventsCard(SurfaceTokens t) {
+  Widget _eventsCard(SurfaceTokens t, LiveService live) {
+    final events = live.logs.take(12).toList();
     return Container(
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
       child: Column(
@@ -216,53 +266,103 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(width: 8),
                 Text('Recent Events', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
                 const Spacer(),
-                Text('${recentEvents.length} events', style: TextStyle(fontSize: 12, color: t.muted)),
+                Text('${live.logs.length} logged', style: TextStyle(fontSize: 12, color: t.muted)),
               ],
             ),
           ),
           Expanded(
-            child: ListView.separated(
-              itemCount: recentEvents.length,
-              separatorBuilder: (_, __) => Divider(height: 1, color: t.border),
-              itemBuilder: (_, i) {
-                final ev = recentEvents[i];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Container(width: 8, height: 8, decoration: BoxDecoration(color: Color(ev.color), shape: BoxShape.circle)),
+            child: events.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.history, size: 24, color: t.muted),
+                          const SizedBox(height: 8),
+                          Text('No alert history yet', style: TextStyle(fontSize: 12, color: t.muted)),
+                          const SizedBox(height: 4),
+                          Text('Events appear as tags report telemetry', style: TextStyle(fontSize: 10, color: t.muted)),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: events.length,
+                    separatorBuilder: (_, __) => Divider(height: 1, color: t.border),
+                    itemBuilder: (_, i) {
+                      final ev = events[i];
+                      final isCritical = ev.alertType == 'critical';
+                      final color = isCritical
+                          ? AppColors.red
+                          : ev.alertType == 'danger'
+                              ? AppColors.amber
+                              : AppColors.blue;
+                      final who = ev.minerName ?? ev.mac;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(ev.msg, style: TextStyle(fontSize: 12, color: t.fg, height: 1.3)),
-                            const SizedBox(height: 2),
-                            Text(ev.time, style: TextStyle(fontSize: 10, color: t.muted)),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(ev.alertMsg ?? '$who raised an alert', style: TextStyle(fontSize: 12, color: t.fg, height: 1.3)),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    [who, ev.zone, ev.createdAt != null ? timeAgo(ev.createdAt!) : null]
+                                        .whereType<String>()
+                                        .where((s) => s.isNotEmpty)
+                                        .join(' · '),
+                                    style: TextStyle(fontSize: 10, color: t.muted),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _liveBadge() {
+  Widget _liveBadge(ConnStatus status) {
     final t = tokensOf(context);
-    // Light-mode pastel chip glares on dark surfaces; use a translucent tint + bright fg.
-    final bg = t.isDark ? const Color(0x1A22C55E) : const Color(0xFFF0FDF4);
-    final border = t.isDark ? const Color(0x3322C55E) : const Color(0xFFBBF7D0);
-    final fg = t.isDark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A);
+    final Color bg;
+    final Color border;
+    final Color fg;
+    final String label;
+    final bool animate;
+    switch (status) {
+      case ConnStatus.live:
+        bg = t.isDark ? const Color(0x1A22C55E) : const Color(0xFFF0FDF4);
+        border = t.isDark ? const Color(0x3322C55E) : const Color(0xFFBBF7D0);
+        fg = t.isDark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A);
+        label = 'LIVE';
+        animate = true;
+      case ConnStatus.connecting:
+        bg = t.isDark ? const Color(0x1AF59E0B) : const Color(0xFFFEF3C7);
+        border = t.isDark ? const Color(0x33F59E0B) : const Color(0xFFFDE68A);
+        fg = t.isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309);
+        label = 'CONNECTING';
+        animate = false;
+      case ConnStatus.offline:
+        bg = t.isDark ? const Color(0x1AEF4444) : const Color(0xFFFEE2E2);
+        border = t.isDark ? const Color(0x33EF4444) : const Color(0xFFFECACA);
+        fg = t.isDark ? const Color(0xFFF87171) : const Color(0xFFB91C1C);
+        label = 'OFFLINE';
+        animate = false;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -273,15 +373,15 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const _BlinkDot(),
+          _BlinkDot(color: fg, animate: animate),
           const SizedBox(width: 5),
-          Text('LIVE', style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+          Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
-  Widget _tabbedTable(SurfaceTokens t) {
+  Widget _tabbedTable(SurfaceTokens t, LiveService live) {
     return Container(
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
       child: Column(
@@ -293,7 +393,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ],
           ),
           const Divider(height: 1),
-          _tabPersonnel ? _personnelTable(t) : _gatewayTable(t),
+          _tabPersonnel ? _personnelTable(t, live) : _gatewayTable(t),
         ],
       ),
     );
@@ -318,90 +418,135 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _personnelTable(SurfaceTokens t) {
-    final headers = ['#', 'Employee', 'Department', 'Shift', 'Zone', 'BLE Tag', 'Battery', 'Signal', 'Status', 'Last Seen', 'Actions'];
+  Widget _personnelTable(SurfaceTokens t, LiveService live) {
+    final miners = live.state.miners;
+    final headers = ['#', 'Personnel', 'Zone', 'BLE Tag', 'Battery', 'Temp', 'Signal', 'Status', 'Last Seen', 'Actions'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
         columnSpacing: 16,
         headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
         columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
-        rows: List.generate(workers.length, (i) {
-          final w = workers[i];
-          return DataRow(
-            cells: [
-              DataCell(Text('${i + 1}', style: TextStyle(fontSize: 11, color: t.muted))),
-              DataCell(Row(children: [
-                CircleAvatar(radius: 14, backgroundColor: AppColors.blue600, child: Text(w.initials, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))),
-                const SizedBox(width: 8),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                  Text(w.name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: t.fg)),
-                  Text(w.empNo, style: TextStyle(fontSize: 10, color: t.muted)),
-                ]),
-              ])),
-              DataCell(Text(w.dept, style: TextStyle(fontSize: 11, color: t.muted))),
-              DataCell(Badge(label: w.shift, color: BadgeColor.blue)),
-              DataCell(Text(w.zone, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: t.fg))),
-              DataCell(Text(w.bleTag, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.fg))),
-              DataCell(BatteryBar(value: w.battery, width: 64)),
-              DataCell(Text('${w.signal} dBm', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
-              DataCell(Badge(label: w.status.label, color: _workerStatusColor(w))),
-              DataCell(Text(w.lastSeen, style: TextStyle(fontSize: 11, color: t.muted))),
-              DataCell(Row(children: [
-                IconButton(
-                  icon: Icon(Icons.visibility_outlined, size: 15),
-                  onPressed: () {},
-                  tooltip: 'View ${w.name}',
-                  visualDensity: VisualDensity.compact,
+        rows: miners.isEmpty
+            ? [
+                DataRow(
+                  cells: [
+                    DataCell(Text(
+                      live.status == ConnStatus.offline
+                          ? 'Backend offline — showing nothing until the connection is restored'
+                          : 'No tags reporting yet — waiting for BLE telemetry',
+                      style: TextStyle(fontSize: 12, color: t.muted),
+                    )),
+                    ...List.filled(headers.length - 1, const DataCell(SizedBox())),
+                  ],
                 ),
-                IconButton(
-                  icon: Icon(Icons.navigation_outlined, size: 15),
-                  onPressed: () {},
-                  tooltip: 'Locate ${w.name} on map',
-                  visualDensity: VisualDensity.compact,
-                ),
-              ])),
-            ],
-          );
-        }),
+              ]
+            : List.generate(miners.length, (i) {
+                final m = miners[i];
+                final hasCritical = m.alerts.any((a) => a.type == 'critical');
+                final hasDanger = m.alerts.any((a) => a.type == 'danger');
+                final displayName = m.name ?? live.nameForMac(m.mac) ?? 'Unregistered tag';
+                return DataRow(
+                  color: WidgetStateProperty.all(
+                      hasCritical ? AppColors.red.withOpacity(0.08) : hasDanger ? AppColors.amber.withOpacity(0.06) : null),
+                  cells: [
+                    DataCell(Text('${i + 1}', style: TextStyle(fontSize: 11, color: t.muted))),
+                    DataCell(Row(children: [
+                      CircleAvatar(
+                          radius: 14,
+                          backgroundColor: hasCritical ? AppColors.red : AppColors.blue600,
+                          child: Text(_initials(displayName),
+                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))),
+                      const SizedBox(width: 8),
+                      Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                        Text(displayName, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: t.fg)),
+                        Text(m.registered ? 'Registered' : 'MAC ${m.mac}', style: TextStyle(fontSize: 10, color: t.muted)),
+                      ]),
+                    ])),
+                    DataCell(Text(m.zone ?? '—', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: t.fg))),
+                    DataCell(Text(m.mac, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.fg))),
+                    DataCell(m.battery != null ? BatteryBar(value: m.battery!, width: 64) : Text('—', style: TextStyle(fontSize: 11, color: t.muted))),
+                    DataCell(m.temperature != null
+                        ? Text('${m.temperature!.toStringAsFixed(1)}°C',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: m.temperature! > 32 ? AppColors.red : t.fg,
+                                fontWeight: m.temperature! > 32 ? FontWeight.w500 : FontWeight.normal))
+                        : Text('—', style: TextStyle(fontSize: 11, color: t.muted))),
+                    DataCell(Text('${m.rssi.toStringAsFixed(0)} dBm', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
+                    DataCell(_minerStatusBadge(t, m)),
+                    DataCell(Text(timeAgoFromEpoch(m.lastSeen), style: TextStyle(fontSize: 11, color: t.muted))),
+                    DataCell(Row(children: [
+                      IconButton(
+                        icon: Icon(Icons.visibility_outlined, size: 15),
+                        onPressed: () {},
+                        tooltip: 'View $displayName',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ])),
+                  ],
+                );
+              }),
       ),
     );
+  }
+
+  Badge _minerStatusBadge(SurfaceTokens t, MinerEntry m) {
+    if (m.alerts.any((a) => a.type == 'critical')) return const Badge(label: 'EMERGENCY', color: BadgeColor.red);
+    if (m.alerts.any((a) => a.type == 'danger')) return const Badge(label: 'ALERT', color: BadgeColor.yellow);
+    if (m.moving) return const Badge(label: 'Moving', color: BadgeColor.blue);
+    return const Badge(label: 'Stationary', color: BadgeColor.gray);
+  }
+
+  String _initials(String name) {
+    final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, parts.first.length > 2 ? 2 : 1).toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
   Widget _gatewayTable(SurfaceTokens t) {
-    final headers = ['Gateway', 'Location', 'Signal', 'Power', 'UPS', 'Temperature', 'Status', 'Last Comm', 'Battery Health'];
+    final live = context.watch<LiveService>();
+    final gateways = live.state.gateways;
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final headers = ['Gateway', 'Zone', 'Signal', 'Miners Carried', 'Status', 'Last Telemetry'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
         columnSpacing: 16,
         headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
         columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
-        rows: gateways.map((g) {
-          return DataRow(
-            cells: [
-              DataCell(Text(g.name, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: t.fg))),
-              DataCell(Text(g.location, style: TextStyle(fontSize: 11, color: t.muted))),
-              DataCell(Text('${g.signal} dBm', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
-              DataCell(Badge(label: g.power, color: g.power == 'PoE' ? BadgeColor.blue : BadgeColor.yellow)),
-              DataCell(Icon(g.ups ? Icons.check_circle : Icons.cancel, size: 13, color: g.ups ? AppColors.green : t.muted)),
-              DataCell(Text('${g.temperature}°C', style: TextStyle(fontSize: 11, color: g.temperature > 34 ? AppColors.red : t.fg, fontWeight: g.temperature > 34 ? FontWeight.w500 : FontWeight.normal))),
-              DataCell(Badge(label: g.online ? 'Online' : 'Offline', color: g.online ? BadgeColor.green : BadgeColor.red)),
-              DataCell(Text(g.lastComm, style: TextStyle(fontSize: 11, color: t.muted))),
-              DataCell(BatteryBar(value: g.batteryHealth, width: 56)),
-            ],
-          );
-        }).toList(),
+        rows: gateways.isEmpty
+            ? [
+                DataRow(cells: [
+                  DataCell(Text(
+                    live.status == ConnStatus.offline
+                        ? 'Backend offline — cannot load gateway status'
+                        : 'No gateways have forwarded telemetry yet',
+                    style: TextStyle(fontSize: 12, color: t.muted),
+                  )),
+                  ...List.filled(headers.length - 1, const DataCell(SizedBox())),
+                ]),
+              ]
+            : gateways
+                .map((g) {
+                  final isOnline = now - g.lastSeen < 300;
+                  return DataRow(cells: [
+                    DataCell(Text(g.id, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: t.fg))),
+                    DataCell(Text(g.zone, style: TextStyle(fontSize: 11, color: t.muted))),
+                    DataCell(Text('${g.rssi.toStringAsFixed(0)} dBm', style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted))),
+                    DataCell(Text('${g.miners}', style: TextStyle(fontSize: 11, color: t.fg, fontWeight: FontWeight.w500))),
+                    DataCell(Badge(label: isOnline ? 'Active' : 'Quiet', color: isOnline ? BadgeColor.green : BadgeColor.gray)),
+                    DataCell(Text(timeAgoFromEpoch(g.lastSeen), style: TextStyle(fontSize: 11, color: t.muted))),
+                  ]);
+                })
+                .toList(),
       ),
     );
   }
 
-  BadgeColor _workerStatusColor(Worker w) {
-    if (w.status == WorkerStatus.emergency) return BadgeColor.red;
-    if (w.status == WorkerStatus.moving) return BadgeColor.blue;
-    return BadgeColor.gray;
-  }
-
-  Widget _batteryCard() {
+  Widget _batteryCard(List<BatterySlice> slices) {
     final t = tokensOf(context);
     return Container(
       padding: const EdgeInsets.all(16),
@@ -411,19 +556,25 @@ class _DashboardPageState extends State<DashboardPage> {
         children: [
           Text('Battery Health', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
           const SizedBox(height: 12),
-          const BatteryDonut(size: 160),
+          BatteryDonut(size: 160, data: slices),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: batteryPie
-                .map((d) => Row(mainAxisSize: MainAxisSize.min, children: [
-                      Container(width: 8, height: 8, decoration: BoxDecoration(color: Color(d.color), shape: BoxShape.circle)),
-                      const SizedBox(width: 6),
-                      Flexible(child: Text('${d.name}: ${d.value}', style: TextStyle(fontSize: 10, color: t.muted))),
-                    ]))
-                .toList(),
-          ),
+          if (slices.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: Text('No battery readings yet — waiting for tag telemetry', style: TextStyle(fontSize: 10, color: t.muted)),
+            )
+          else
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: slices
+                  .map((d) => Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(width: 8, height: 8, decoration: BoxDecoration(color: Color(d.color), shape: BoxShape.circle)),
+                        const SizedBox(width: 6),
+                        Flexible(child: Text('${d.name}: ${d.value}', style: TextStyle(fontSize: 10, color: t.muted))),
+                      ]))
+                  .toList(),
+            ),
         ],
       ),
     );
@@ -448,7 +599,10 @@ class _DashboardPageState extends State<DashboardPage> {
 }
 
 class _BlinkDot extends StatefulWidget {
-  const _BlinkDot();
+  final Color color;
+  final bool animate;
+  const _BlinkDot({required this.color, this.animate = true});
+
   @override
   State<_BlinkDot> createState() => _BlinkDotState();
 }
@@ -456,6 +610,7 @@ class _BlinkDot extends StatefulWidget {
 class _BlinkDotState extends State<_BlinkDot> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
   bool _animating = false;
+
   @override
   void initState() {
     super.initState();
@@ -465,14 +620,24 @@ class _BlinkDotState extends State<_BlinkDot> with SingleTickerProviderStateMixi
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Honor the platform "reduce motion" setting: steady dot instead of blinking.
-    final reduce = MediaQuery.of(context).disableAnimations;
-    if (reduce && _animating) {
-      _c.stop();
-      _animating = false;
-    } else if (!reduce && !_animating) {
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BlinkDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _syncMotion();
+  }
+
+  void _syncMotion() {
+    // Honor the platform "reduce motion" setting and non-live connection states.
+    final shouldAnimate = widget.animate && !MediaQuery.of(context).disableAnimations;
+    if (shouldAnimate && !_animating) {
       _c.repeat(reverse: true);
       _animating = true;
+    } else if (!shouldAnimate && _animating) {
+      _c.stop();
+      _animating = false;
     }
   }
 
@@ -483,11 +648,13 @@ class _BlinkDotState extends State<_BlinkDot> with SingleTickerProviderStateMixi
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _c,
-        builder: (_, __) => Opacity(
-          opacity: 0.4 + 0.6 * _c.value,
-          child: Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF22C55E), shape: BoxShape.circle)),
-        ),
-      );
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => Opacity(
+        opacity: 0.4 + 0.6 * _c.value,
+        child: Container(width: 6, height: 6, decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)),
+      ),
+    );
+  }
 }
