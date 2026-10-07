@@ -25,7 +25,9 @@ class KpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final iconBg = _iconBg[color]!;
+    // Light-mode pastel tints glare on dark surfaces; use translucent chips + bright fg instead.
+    final iconBg = (t.isDark ? _iconBgDark : _iconBgLight)[color]!;
+    final iconFg = (t.isDark ? _iconFgDark : _iconFgLight)[color]!;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -42,7 +44,7 @@ class KpiCard extends StatelessWidget {
               color: iconBg,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 18, color: _iconFg[color]!),
+            child: Icon(icon, size: 18, color: iconFg),
           ),
           const SizedBox(width: 12),
           Flexible(
@@ -99,7 +101,7 @@ class KpiCard extends StatelessWidget {
 
 enum TrendArrow { up, down, neutral }
 
-const _iconBg = <KpiColor, Color>{
+const _iconBgLight = <KpiColor, Color>{
   KpiColor.blue: Color(0xFFEFF6FF),
   KpiColor.green: Color(0xFFF0FDF4),
   KpiColor.red: Color(0xFFFEF2F2),
@@ -109,7 +111,7 @@ const _iconBg = <KpiColor, Color>{
   KpiColor.gray: Color(0xFFF8FAFC),
 };
 
-const _iconFg = <KpiColor, Color>{
+const _iconFgLight = <KpiColor, Color>{
   KpiColor.blue: Color(0xFF2563EB),
   KpiColor.green: Color(0xFF16A34A),
   KpiColor.red: Color(0xFFDC2626),
@@ -117,4 +119,24 @@ const _iconFg = <KpiColor, Color>{
   KpiColor.purple: Color(0xFF7C3AED),
   KpiColor.teal: Color(0xFF0D9488),
   KpiColor.gray: Color(0xFF64748B),
+};
+
+const _iconBgDark = <KpiColor, Color>{
+  KpiColor.blue: Color(0x1A2563EB),
+  KpiColor.green: Color(0x1A16A34A),
+  KpiColor.red: Color(0x1ADC2626),
+  KpiColor.yellow: Color(0x1AD97706),
+  KpiColor.purple: Color(0x1A7C3AED),
+  KpiColor.teal: Color(0x1A0D9488),
+  KpiColor.gray: Color(0x1A64748B),
+};
+
+const _iconFgDark = <KpiColor, Color>{
+  KpiColor.blue: Color(0xFF60A5FA),
+  KpiColor.green: Color(0xFF4ADE80),
+  KpiColor.red: Color(0xFFF87171),
+  KpiColor.yellow: Color(0xFFFBBF24),
+  KpiColor.purple: Color(0xFFA78BFA),
+  KpiColor.teal: Color(0xFF2DD4BF),
+  KpiColor.gray: Color(0xFF94A3B8),
 };

@@ -95,19 +95,34 @@ class _TopBarState extends State<TopBar> {
               // Bell
               Stack(
                 children: [
-                  IconButton(
-                    icon: Icon(Icons.notifications_none_rounded, color: t.muted, size: 18),
-                    onPressed: () {},
-                    splashRadius: 18,
+                  Semantics(
+                    label: 'Notifications. 1 unread alert.',
+                    child: IconButton(
+                      icon: Icon(Icons.notifications_none_rounded, color: t.muted, size: 18),
+                      onPressed: () {},
+                      tooltip: 'Notifications',
+                    ),
                   ),
-                  Positioned(top: 8, right: 8, child: Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFFEF4444), shape: BoxShape.circle))),
+                  const Positioned(
+                    top: 8,
+                    right: 8,
+                    child: ExcludeSemantics(
+                      child: SizedBox(
+                        width: 8,
+                        height: 8,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(color: Color(0xFFEF4444), shape: BoxShape.circle),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               // Dark toggle
               IconButton(
                 icon: Icon(app.darkMode ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: t.muted, size: 18),
                 onPressed: app.toggleDarkMode,
-                splashRadius: 18,
+                tooltip: app.darkMode ? 'Switch to light mode' : 'Switch to dark mode',
               ),
               const SizedBox(width: 4),
               // Profile

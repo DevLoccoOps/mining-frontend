@@ -7,10 +7,10 @@ import '../utils/helpers.dart';
 
 const _axisLabelColor = Color(0xFF9CA3AF);
 
-Widget _bottomTitle(String text, {double size = 9}) {
+Widget _bottomTitle(String text, {double size = 10, Color color = _axisLabelColor}) {
   return Padding(
     padding: const EdgeInsets.only(top: 6),
-    child: Text(text, style: TextStyle(fontSize: size, color: _axisLabelColor)),
+    child: Text(text, style: TextStyle(fontSize: size, color: color)),
   );
 }
 
@@ -30,22 +30,38 @@ class BatteryDonut extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = tokensOf(context);
+    final total = batteryPie.fold<int>(0, (sum, s) => sum + s.value);
     return SizedBox(
       width: double.infinity,
       height: size,
-      child: PieChart(
-        PieChartData(
-          sectionsSpace: 3,
-          centerSpaceRadius: inner,
-          sections: batteryPie
-              .map((s) => PieChartSectionData(
-                    value: s.value.toDouble(),
-                    color: Color(s.color),
-                    radius: outer - inner,
-                    title: '',
-                  ))
-              .toList(),
-        ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          PieChart(
+            PieChartData(
+              sectionsSpace: 3,
+              centerSpaceRadius: inner,
+              sections: batteryPie
+                  .map((s) => PieChartSectionData(
+                        value: s.value.toDouble(),
+                        color: Color(s.color),
+                        radius: outer - inner,
+                        title: '',
+                      ))
+                  .toList(),
+            ),
+          ),
+          // Headline total in the donut center — the eye lands here first.
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$total',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: t.fg, height: 1.1)),
+              Text('TAGS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: t.muted)),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -85,7 +101,7 @@ class WorkerDistributionBar extends StatelessWidget {
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 32,
-                getTitlesWidget: (v, _) => _bottomTitle(workerDist[v.toInt()].zone),
+                getTitlesWidget: (v, _) => _bottomTitle(workerDist[v.toInt()].zone, color: t.muted),
               ),
             ),
           ),
@@ -136,7 +152,7 @@ class SignalAreaChart extends StatelessWidget {
                 reservedSize: 28,
                 interval: 2,
                 getTitlesWidget: (v, _) => v.toInt() >= 0 && v.toInt() < signalTrend.length
-                    ? _bottomTitle(signalTrend[v.toInt()].t)
+                    ? _bottomTitle(signalTrend[v.toInt()].t, color: t.muted)
                     : const SizedBox(),
               ),
             ),
@@ -191,7 +207,7 @@ class PersonnelAreaChart extends StatelessWidget {
                 reservedSize: 28,
                 interval: 2,
                 getTitlesWidget: (v, _) => v.toInt() >= 0 && v.toInt() < personnelTrend.length
-                    ? _bottomTitle(personnelTrend[v.toInt()].t, size: 10)
+                    ? _bottomTitle(personnelTrend[v.toInt()].t, color: t.muted)
                     : const SizedBox(),
               ),
             ),
@@ -239,7 +255,7 @@ class GatewayUptimeBar extends StatelessWidget {
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 32,
-                getTitlesWidget: (v, _) => _bottomTitle(gatewayUptime[v.toInt()].name),
+                getTitlesWidget: (v, _) => _bottomTitle(gatewayUptime[v.toInt()].name, color: t.muted),
               ),
             ),
           ),
@@ -282,7 +298,7 @@ class SignalLineChart extends StatelessWidget {
                 reservedSize: 28,
                 interval: 2,
                 getTitlesWidget: (v, _) => v.toInt() >= 0 && v.toInt() < signalTrend.length
-                    ? _bottomTitle(signalTrend[v.toInt()].t, size: 10)
+                    ? _bottomTitle(signalTrend[v.toInt()].t, color: t.muted)
                     : const SizedBox(),
               ),
             ),

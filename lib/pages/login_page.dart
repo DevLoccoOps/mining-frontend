@@ -21,11 +21,26 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   bool _remember = false;
   bool _loading = false;
   late final AnimationController _particles;
+  bool _animating = false;
 
   @override
   void initState() {
     super.initState();
-    _particles = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat();
+    _particles = AnimationController(vsync: this, duration: const Duration(seconds: 3));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honor the platform "reduce motion" setting: skip the drifting particles.
+    final reduce = MediaQuery.of(context).disableAnimations;
+    if (reduce && _animating) {
+      _particles.stop();
+      _animating = false;
+    } else if (!reduce && !_animating) {
+      _particles.repeat();
+      _animating = true;
+    }
   }
 
   @override
@@ -165,6 +180,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                     icon: Icon(_showPass ? Icons.visibility_off_outlined : Icons.visibility_outlined,
                         size: 14, color: const Color(0x9960A5FA)),
                     onPressed: () => setState(() => _showPass = !_showPass),
+                    tooltip: _showPass ? 'Hide password' : 'Show password',
                   ),
                 ),
                 onSubmitted: (_) => _handleLogin(),
@@ -314,7 +330,6 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rng = math.Random(42);
     for (var i = 0; i < 20; i++) {
       final r = 2 + (i % 4);
       final left = (5 + (i * 23) % 90) / 100 * size.width;

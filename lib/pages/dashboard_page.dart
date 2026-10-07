@@ -174,8 +174,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(width: 8),
                 _liveBadge(),
                 const Spacer(),
-                IconButton(icon: Icon(Icons.layers, size: 14, color: t.muted), onPressed: () {}, splashRadius: 14),
-                IconButton(icon: Icon(Icons.refresh, size: 14, color: t.muted), onPressed: () {}, splashRadius: 14),
+                IconButton(icon: Icon(Icons.layers, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Map layers'),
+                IconButton(icon: Icon(Icons.refresh, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Refresh map'),
               ],
             ),
           ),
@@ -257,22 +257,29 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _liveBadge() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF0FDF4),
-          border: Border.all(color: const Color(0xFFBBF7D0)),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            _BlinkDot(),
-            SizedBox(width: 5),
-            Text('LIVE', style: TextStyle(color: Color(0xFF16A34A), fontSize: 11, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      );
+  Widget _liveBadge() {
+    final t = tokensOf(context);
+    // Light-mode pastel chip glares on dark surfaces; use a translucent tint + bright fg.
+    final bg = t.isDark ? const Color(0x1A22C55E) : const Color(0xFFF0FDF4);
+    final border = t.isDark ? const Color(0x3322C55E) : const Color(0xFFBBF7D0);
+    final fg = t.isDark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const _BlinkDot(),
+          const SizedBox(width: 5),
+          Text('LIVE', style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
 
   Widget _tabbedTable(SurfaceTokens t) {
     return Container(
@@ -317,7 +324,7 @@ class _DashboardPageState extends State<DashboardPage> {
       scrollDirection: Axis.horizontal,
       child: DataTable(
         columnSpacing: 16,
-        headingRowColor: MaterialStateProperty.all(t.mutedBg.withOpacity(0.4)),
+        headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
         columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
         rows: List.generate(workers.length, (i) {
           final w = workers[i];
@@ -341,8 +348,18 @@ class _DashboardPageState extends State<DashboardPage> {
               DataCell(Badge(label: w.status.label, color: _workerStatusColor(w))),
               DataCell(Text(w.lastSeen, style: TextStyle(fontSize: 11, color: t.muted))),
               DataCell(Row(children: [
-                IconButton(icon: Icon(Icons.visibility_outlined, size: 13), onPressed: () {}, splashRadius: 12),
-                IconButton(icon: Icon(Icons.navigation_outlined, size: 13), onPressed: () {}, splashRadius: 12),
+                IconButton(
+                  icon: Icon(Icons.visibility_outlined, size: 15),
+                  onPressed: () {},
+                  tooltip: 'View ${w.name}',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: Icon(Icons.navigation_outlined, size: 15),
+                  onPressed: () {},
+                  tooltip: 'Locate ${w.name} on map',
+                  visualDensity: VisualDensity.compact,
+                ),
               ])),
             ],
           );
@@ -357,7 +374,7 @@ class _DashboardPageState extends State<DashboardPage> {
       scrollDirection: Axis.horizontal,
       child: DataTable(
         columnSpacing: 16,
-        headingRowColor: MaterialStateProperty.all(t.mutedBg.withOpacity(0.4)),
+        headingRowColor: WidgetStateProperty.all(t.mutedBg.withOpacity(0.4)),
         columns: headers.map((h) => DataColumn(label: Text(h, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.muted)))).toList(),
         rows: gateways.map((g) {
           return DataRow(
@@ -438,10 +455,25 @@ class _BlinkDot extends StatefulWidget {
 
 class _BlinkDotState extends State<_BlinkDot> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
+  bool _animating = false;
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honor the platform "reduce motion" setting: steady dot instead of blinking.
+    final reduce = MediaQuery.of(context).disableAnimations;
+    if (reduce && _animating) {
+      _c.stop();
+      _animating = false;
+    } else if (!reduce && !_animating) {
+      _c.repeat(reverse: true);
+      _animating = true;
+    }
   }
 
   @override

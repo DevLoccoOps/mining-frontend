@@ -122,16 +122,12 @@ class _AlertsPageState extends State<AlertsPage> {
   }
 
   Widget _alertCard(AlertItem a, SurfaceTokens t) {
-    final Color tint;
     final Color tintBorder;
     if (a.severity == AlertSeverity.critical) {
-      tint = const Color(0x4DEF4444);
-      tintBorder = const Color(0xFFE5A0A0);
+      tintBorder = t.isDark ? const Color(0x66EF4444) : const Color(0xFFE5A0A0);
     } else if (a.severity == AlertSeverity.warning) {
-      tint = const Color(0x33F59E0B);
-      tintBorder = const Color(0xFFFDE68A);
+      tintBorder = t.isDark ? const Color(0x66F59E0B) : const Color(0xFFFDE68A);
     } else {
-      tint = t.mutedBg;
       tintBorder = t.border;
     }
     final iconColor = a.severity == AlertSeverity.critical ? AppColors.red : a.severity == AlertSeverity.warning ? AppColors.amber : AppColors.blue;

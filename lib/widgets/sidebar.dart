@@ -52,9 +52,7 @@ class Sidebar extends StatelessWidget {
                 IconButton(
                   icon: Icon(collapsed ? Icons.chevron_right : Icons.chevron_left, color: const Color(0x66FFFFFF), size: 16),
                   onPressed: app.toggleCollapsed,
-                  splashRadius: 16,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                  tooltip: collapsed ? 'Expand sidebar' : 'Collapse sidebar',
                 ),
               ],
             ),
@@ -84,7 +82,7 @@ class Sidebar extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       const Text('Version 1.0 · InnovAI Technologies',
-                          style: TextStyle(color: Color(0x8060A5FA), fontSize: 10)),
+                          style: TextStyle(color: Color(0x99BFDBFE), fontSize: 10)),
                     ],
                   ),
           ),
@@ -173,11 +171,26 @@ class _PulseDot extends StatefulWidget {
 
 class _PulseDotState extends State<_PulseDot> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
+  bool _animating = false;
 
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honor the platform "reduce motion" setting: render a steady dot instead of pulsing.
+    final reduce = MediaQuery.of(context).disableAnimations;
+    if (reduce && _animating) {
+      _c.stop();
+      _animating = false;
+    } else if (!reduce && !_animating) {
+      _c.repeat(reverse: true);
+      _animating = true;
+    }
   }
 
   @override

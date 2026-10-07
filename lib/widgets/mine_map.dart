@@ -30,15 +30,30 @@ class MineMap extends StatefulWidget {
 class _MineMapState extends State<MineMap> with TickerProviderStateMixin {
   late final AnimationController _pulse;
   late final AnimationController _emergency;
+  bool _animating = false;
   static const viewW = 820.0, viewH = 520.0;
 
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))
-      ..repeat();
-    _emergency = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))
-      ..repeat(reverse: true);
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200));
+    _emergency = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honor the platform "reduce motion" setting: static map instead of pulsing rings.
+    final reduce = MediaQuery.of(context).disableAnimations;
+    if (reduce && _animating) {
+      _pulse.stop();
+      _emergency.stop();
+      _animating = false;
+    } else if (!reduce && !_animating) {
+      _pulse.repeat();
+      _emergency.repeat(reverse: true);
+      _animating = true;
+    }
   }
 
   @override
