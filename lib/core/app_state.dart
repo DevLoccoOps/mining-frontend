@@ -8,6 +8,9 @@ class AppState extends ChangeNotifier {
   bool collapsed = false;
   bool darkMode = false;
 
+  /// Global search query set from the top bar; consumed by Live Tracking.
+  String searchQuery = '';
+
   void login() {
     isLoggedIn = true;
     notifyListeners();
@@ -21,6 +24,12 @@ class AppState extends ChangeNotifier {
 
   void setPage(PageKey p) {
     currentPage = p;
+    notifyListeners();
+  }
+
+  void setSearch(String q) {
+    if (searchQuery == q) return;
+    searchQuery = q;
     notifyListeners();
   }
 

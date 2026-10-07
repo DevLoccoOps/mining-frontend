@@ -1,23 +1,36 @@
 import 'package:flutter/material.dart' hide Badge;
+import 'package:provider/provider.dart';
 
-import '../data/mock_data.dart';
+import '../core/app_state.dart';
+import '../core/live_service.dart';
+import '../core/page_type.dart';
+import '../models/api_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/badge.dart';
 
+/// Administration — an honest hub: every card links to a page that is actually
+/// wired to the backend, and the system facts card shows real /api/stats data.
 class AdminPage extends StatelessWidget {
   const AdminPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     final t = tokensOf(context);
-    final sections = [
-      (Icons.group, 'User Management', 'Manage system users, roles and permissions', ['Users', 'Roles', 'Permissions']),
-      (Icons.map_outlined, 'Mine Configuration', 'Zones, gateways, and layout settings', ['Mine Layout', 'Zone Config', 'Gateway Config']),
-      (Icons.notifications_none_rounded, 'Notification Rules', 'Configure Email, SMS and WhatsApp alerts', ['Email Rules', 'SMS Rules', 'WhatsApp']),
-      (Icons.storage, 'Data Management', 'Retention policies and backup schedules', ['Data Retention', 'Backups', 'Archive']),
-      (Icons.vpn_key, 'API & Integrations', 'API keys and third-party integrations', ['API Keys', 'Webhooks', 'OAuth Apps']),
-      (Icons.public, 'Departments', 'Manage company departments and shifts', ['Departments', 'Shift Schedules', 'Contractors']),
+    final live = context.watch<LiveService>();
+    final stats = live.stats;
+
+    // Every entry navigates to a real, live-data page — nothing decorative.
+    final links = <(IconData, PageKey, String, String)>[
+      (Icons.group, PageKey.personnel, 'Personnel', 'Register staff, assign tags, manage roles'),
+      (Icons.tag, PageKey.bleDevices, 'BLE Tags', 'Register and remove tracking tags'),
+      (Icons.wifi, PageKey.gateways, 'Gateways', 'Live gateway liveness and carried-miner counts'),
+      (Icons.map_outlined, PageKey.mineZones, 'Mine Zones', 'Zone occupancy, temperature and alert state'),
+      (Icons.warning_amber_rounded, PageKey.alerts, 'Alerts', 'Live alert queue with acknowledge'),
+      (Icons.calendar_month, PageKey.shifts, 'Shifts', 'Personnel grouped by shift with live status'),
+      (Icons.dns, PageKey.systemHealth, 'System Health', 'Backend uptime, connections and data volumes'),
+      (Icons.settings, PageKey.settings, 'Settings', 'Appearance and display preferences'),
     ];
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -25,13 +38,15 @@ class AdminPage extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('Administration', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: t.fg)),
-          Text('System configuration and management', style: TextStyle(fontSize: 13, color: t.muted)),
+          Text('Manage the live tracking system', style: TextStyle(fontSize: 13, color: t.muted)),
+          const SizedBox(height: 20),
+          _factsCard(t, live, stats),
           const SizedBox(height: 20),
           LayoutBuilder(
             builder: (context, c) {
-              final cols = c.maxWidth > 1280 ? 3 : c.maxWidth > 760 ? 2 : 1;
+              final cols = c.maxWidth > 1280 ? 4 : c.maxWidth > 760 ? 2 : 1;
               const spacing = 16.0;
-              final cards = sections.map((s) => _sectionCard(s, t, context)).toList();
+              final cards = links.map((l) => _linkCard(l, t, context)).toList();
               final List<Widget> rows = [];
               for (var i = 0; i < cards.length; i += cols) {
                 final rowChildren = <Widget>[];
@@ -53,46 +68,86 @@ class AdminPage extends StatelessWidget {
             },
           ),
           const SizedBox(height: 20),
-          // Audit logs
-          Container(
-            decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
-            child: Column(
+          _notYetCard(t),
+        ],
+      ),
+    );
+  }
+
+  /// Real system facts from GET /api/stats — no invented numbers.
+  Widget _factsCard(SurfaceTokens t, LiveService live, StatsSnapshot s) {
+    final up = s.uptimeSeconds;
+    final uptime = up > 0
+        ? up >= 86400
+            ? '${(up / 86400).toStringAsFixed(1)} days'
+            : up >= 3600
+                ? '${(up / 3600).toStringAsFixed(1)} h'
+                : '${(up / 60).toStringAsFixed(0)} min'
+        : '—';
+    final facts = <(IconData, String, String)>[
+      (Icons.schedule, 'Backend Uptime', uptime),
+      (Icons.location_on, 'Personnel Underground', '${s.liveMiners}'),
+      (Icons.wifi, 'Active Gateways', '${s.activeGateways}'),
+      (Icons.person, 'Personnel Registered', '${s.personnelCount}'),
+      (Icons.tag, 'Tags Registered', '${s.tagCount}'),
+      (Icons.warning_amber_rounded, 'Alerts Logged', '${s.alertLogCount}'),
+      (Icons.storage, 'Telemetry Records', '${s.telemetryCount}'),
+      (Icons.devices, 'Dashboard Clients', '${s.wsClients}'),
+    ];
+    return Container(
+      decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Text('Recent Audit Logs', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
-                      const Spacer(),
-                      TextButton(onPressed: () {}, child: const Text('View All')),
-                    ],
-                  ),
+                Text('System Facts — live from the backend', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
+                const Spacer(),
+                Badge(
+                  label: live.status == ConnStatus.live ? 'Live' : live.status == ConnStatus.connecting ? 'Connecting' : 'Offline',
+                  color: live.status == ConnStatus.live
+                      ? BadgeColor.green
+                      : live.status == ConnStatus.connecting
+                          ? BadgeColor.yellow
+                          : BadgeColor.red,
                 ),
-                const Divider(height: 1),
-                ...auditLogs.map((log) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final cols = c.maxWidth > 1024 ? 4 : 2;
+                const spacing = 12.0;
+                final List<Widget> rows = [];
+                for (var i = 0; i < facts.length; i += cols) {
+                  final rowChildren = <Widget>[];
+                  for (var j = i; j < facts.length && j < i + cols; j++) {
+                    if (rowChildren.isNotEmpty) rowChildren.add(const SizedBox(width: spacing));
+                    rowChildren.add(Expanded(
                       child: Row(
                         children: [
-                          SizedBox(
-                            width: 64,
-                            child: Text(log.time, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: t.muted)),
+                          Icon(facts[j].$1, size: 14, color: AppColors.blue),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(facts[j].$2,
+                                maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: t.muted)),
                           ),
-                          Badge(
-                              label: log.type,
-                              color: log.type == 'Alert'
-                                  ? BadgeColor.red
-                                  : log.type == 'Create'
-                                      ? BadgeColor.green
-                                      : log.type == 'System'
-                                          ? BadgeColor.purple
-                                          : BadgeColor.blue),
-                          const SizedBox(width: 12),
-                          Expanded(child: Text(log.action, style: TextStyle(fontSize: 12, color: t.fg))),
-                          Text(log.user, style: TextStyle(fontSize: 11, color: t.muted)),
+                          const SizedBox(width: 8),
+                          Text(facts[j].$3,
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.fg, fontFamily: 'monospace')),
                         ],
                       ),
-                    )),
-              ],
+                    ));
+                  }
+                  if (rows.isNotEmpty) rows.add(const SizedBox(height: spacing));
+                  rows.add(Row(children: rowChildren));
+                }
+                return Column(mainAxisSize: MainAxisSize.min, children: rows);
+              },
             ),
           ),
         ],
@@ -100,115 +155,65 @@ class AdminPage extends StatelessWidget {
     );
   }
 
-  Widget _sectionCard((IconData, String, String, List<String>) s, SurfaceTokens t, BuildContext context) {
+  Widget _linkCard((IconData, PageKey, String, String) l, SurfaceTokens t, BuildContext context) {
     return Container(
       decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          tilePadding: const EdgeInsets.all(20),
-          childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-          shape: const Border(),
-          collapsedShape: const Border(),
-          iconColor: t.muted,
-          collapsedIconColor: t.muted,
-          leading: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
-            child: Icon(s.$1, size: 18, color: AppColors.blue),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => context.read<AppState>().setPage(l.$2),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: t.mutedBg, borderRadius: BorderRadius.circular(12)),
+                    child: Icon(l.$1, size: 18, color: AppColors.blue),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(l.$3, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
+                        const SizedBox(height: 2),
+                        Text(l.$4, style: TextStyle(fontSize: 11, color: t.muted)),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, size: 16, color: t.muted),
+                ],
+              ),
+            ),
           ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(s.$2, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg, fontFamily: 'Inter')),
-              const SizedBox(height: 2),
-              Text(s.$3, style: TextStyle(fontSize: 11, color: t.muted, fontFamily: 'Inter')),
-            ],
-          ),
-          children: s.$4
-              .map((item) => ListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                    title: Text(item, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
-                    trailing: const Icon(Icons.chevron_right, size: 14, color: Color(0xFF94A3B8)),
-                    onTap: () => _openSectionItem(s.$2, item, t, context),
-                  ))
-              .toList(),
         ),
       ),
     );
   }
 
-  void _openSectionItem(String section, String item, SurfaceTokens t, BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        backgroundColor: t.card,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
-                      child: const Icon(Icons.folder_open, size: 18, color: AppColors.blue),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: t.fg, fontFamily: 'Inter')),
-                          Text(section, style: TextStyle(fontSize: 12, color: t.muted, fontFamily: 'Inter')),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 16),
-                      onPressed: () => Navigator.pop(context),
-                      splashRadius: 16,
-                    ),
-                  ],
-                ),
-                const Divider(height: 24),
-                Text('This module is part of "$section" administration.',
-                    style: TextStyle(fontSize: 13, color: t.muted, fontFamily: 'Inter')),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: t.mutedBg, borderRadius: BorderRadius.circular(12)),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, size: 16, color: AppColors.blue),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text('$item management is configured here. Connect a backend to populate this panel with live records.',
-                            style: TextStyle(fontSize: 12, color: t.muted, fontFamily: 'Inter', height: 1.4)),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
-                  ),
-                ),
-              ],
+  /// Honest note about what is NOT implemented, instead of fake modules.
+  Widget _notYetCard(SurfaceTokens t) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: AppColors.blue),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'User accounts, roles, notification channels (email/SMS/WhatsApp), audit logging and data-retention '
+              'policies are not implemented in this deployment. This screen only links to modules that are live. '
+              'Adding user sign-in is the prerequisite for audit logs and role-based permissions.',
+              style: TextStyle(fontSize: 12, color: t.muted, height: 1.5),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

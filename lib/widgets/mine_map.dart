@@ -12,7 +12,7 @@ class MineMap extends StatefulWidget {
   final ValueChanged<Worker?> onHover;
   final Worker? selectedWorker;
   final ValueChanged<Worker>? onTap;
-  final String? layer; // null | "heatmap" | "gas"
+  final String? layer; // null | "density" (real worker clustering)
 
   /// Live personnel dots. Empty = nobody reporting.
   final List<Worker> workers;
@@ -169,16 +169,20 @@ class _MinePainter extends CustomPainter {
       canvas.drawLine(Offset(10, y), Offset(810, y), gridPaint);
     }
 
-    // Layer overlays (gas / heatmap)
-    if (layer == 'gas') {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(const Rect.fromLTWH(104, 340, 56, 112), Radius.circular(8)),
-        Paint()..color = const Color(0xFFEA0000).withOpacity(0.18),
-      );
-    } else if (layer == 'heatmap') {
-      _radial(canvas, const Offset(410, 312), 200, 120, const Color(0xFFEF4444).withOpacity(0.20));
-      _radial(canvas, const Offset(287, 156), 140, 100, const Color(0xFF3B82F6).withOpacity(0.20));
-      _radial(canvas, const Offset(600, 156), 120, 100, const Color(0xFF3B82F6).withOpacity(0.15));
+    // Density overlay — a real heatmap of where personnel actually are:
+    // each worker contributes a soft radial; crowded areas stack up warm.
+    if (layer == 'density' && workers.isNotEmpty) {
+      for (final w in workers) {
+        final neighbours = workers
+            .where((o) => (o != w) && ((o.x - w.x) * (o.x - w.x) + (o.y - w.y) * (o.y - w.y)) <= 90 * 90)
+            .length;
+        final col = neighbours >= 4
+            ? const Color(0xFFEF4444)
+            : neighbours >= 2
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF3B82F6);
+        _radial(canvas, Offset(w.x, w.y), 90, 90, col.withOpacity(0.10));
+      }
     }
 
     // Main Shaft
@@ -241,21 +245,6 @@ class _MinePainter extends CustomPainter {
     // dashed line
     _dashedLine(canvas, const Offset(450, 440), const Offset(684, 440), escapePaint, dash: 6, gap: 4);
     _text(canvas, '▶ ESCAPE ROUTE', const Offset(565, 456), const Color(0xFF22C55E), 8, bold: true, center: true);
-
-    // Restricted zone
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(const Rect.fromLTWH(104, 340, 56, 112), const Radius.circular(4)),
-      Paint()..color = const Color(0xFFEF4444).withOpacity(0.18),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(const Rect.fromLTWH(104, 340, 56, 112), const Radius.circular(4)),
-      Paint()
-        ..color = const Color(0xFFEF4444).withOpacity(0.7)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-    _text(canvas, '⚠ GAS', const Offset(132, 394), const Color(0xFFFCA5A5), 8, bold: true, center: true);
-    _text(canvas, 'RESTRICTED', const Offset(132, 405), const Color(0xFFFCA5A5), 7, center: true);
 
     // Assembly points
     for (final p in [const Offset(740, 155), const Offset(740, 440)]) {

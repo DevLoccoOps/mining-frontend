@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Badge;
 import 'package:provider/provider.dart';
 
+import '../core/app_state.dart';
 import '../core/live_service.dart';
 import '../core/worker_mapper.dart';
 import '../models/worker.dart';
@@ -18,8 +19,18 @@ class LiveTrackingPage extends StatefulWidget {
 class _LiveTrackingPageState extends State<LiveTrackingPage> {
   Worker? _hovered;
   Worker? _selected;
-  String? _layer; // null | "heatmap" | "gas"
+  String? _layer; // null | "density"
   String _search = '';
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Adopt the global search from the top bar when arriving on this page.
+    final q = context.read<AppState>().searchQuery;
+    if (q.isNotEmpty && q != _search) {
+      _search = q.toLowerCase();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -115,7 +126,7 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
                   Row(
                     children: [
                       if (narrow) const Spacer(),
-                      ...['normal', 'heatmap', 'gas'].map((l) {
+                      ...['normal', 'density'].map((l) {
                         final sel = _layer == l || (l == 'normal' && _layer == null);
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
@@ -189,13 +200,13 @@ class _LiveTrackingPageState extends State<LiveTrackingPage> {
       );
 
   Widget _layerBtn(String l, bool sel) {
-    final label = l == 'normal' ? 'Default' : l == 'heatmap' ? 'Heatmap' : 'Gas Overlay';
+    final label = l == 'normal' ? 'Default' : 'Density';
     return Material(
       color: sel ? const Color(0xFF2563EB) : Colors.white.withOpacity(0.06),
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () => setState(() => _layer = l == 'normal' ? null : l),
+        onTap: () => setState(() => _layer = l == 'normal' ? null : 'density'),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(border: Border.all(color: sel ? const Color(0xFF3B82F6) : Colors.white.withOpacity(0.1)), borderRadius: BorderRadius.circular(8)),

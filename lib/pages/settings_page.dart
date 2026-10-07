@@ -14,13 +14,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   double _batteryThreshold = 20;
   double _signalThreshold = -75;
-  final _notifications = [
-    (true, 'Emergency Alerts', 'Receive emergency SOS notifications'),
-    (true, 'Gateway Offline Alerts', 'Notify when a gateway goes offline'),
-    (true, 'Battery Warnings', 'Low battery tag notifications'),
-    (false, 'Daily Summary', 'Receive a daily operational summary'),
-    (false, 'Shift Change Alerts', 'Notifications on shift handover'),
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +29,7 @@ class _SettingsPageState extends State<SettingsPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
             Text('Settings', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: t.fg)),
-            Text('System preferences and configuration', style: TextStyle(fontSize: 13, color: t.muted)),
+            Text('Display preferences for this dashboard', style: TextStyle(fontSize: 13, color: t.muted)),
             const SizedBox(height: 20),
             // Appearance
             _sectionCard(
@@ -52,8 +45,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     app.darkMode,
                     (v) => app.setDarkMode(v),
                   ),
-                  Divider(color: t.border, height: 1),
-                  _row(t, 'Language', 'Interface language', _dropdown(t, ['English', 'Afrikaans', 'Zulu'])),
                 ],
               ),
             ),
@@ -69,7 +60,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     t,
                     'Battery Warning Threshold',
                     '${_batteryThreshold.toInt()}%',
-                    'Alert when BLE tag battery drops below this level',
+                    'Marks a tag as "low battery" in this dashboard. Display-only — '
+                    'the backend raises its own alerts independently.',
                     _batteryThreshold,
                     min: 5,
                     max: 50,
@@ -81,7 +73,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     t,
                     'Signal Sensitivity Threshold',
                     '${_signalThreshold.toInt()} dBm',
-                    'Alert when signal drops below this RSSI value',
+                    'Highlights weak-signal tags in this dashboard. Display-only — '
+                    'not sent to the backend.',
                     _signalThreshold,
                     min: -90,
                     max: -50,
@@ -92,26 +85,41 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(height: 16),
-            // Notifications
-            _sectionCard(
+            _infoCard(
               t,
-              title: 'Notifications',
-              icon: Icons.notifications_none_rounded,
-              child: Column(
-                children: List.generate(_notifications.length, (i) {
-                  final n = _notifications[i];
-                  return Column(
-                    children: [
-                      _toggleRow(t, n.$2, n.$3, n.$1, (v) => setState(() => _notifications[i] = (v, n.$2, n.$3))),
-                      if (i < _notifications.length - 1) Divider(color: t.border, height: 1),
-                    ],
-                  );
-                }),
-              ),
+              'Notifications & alert delivery',
+              'This deployment has no push, email or SMS delivery configured — alert '
+              'rules live server-side. Active alerts appear in real time on the Alerts '
+              'page and in the top-bar notification badge.',
             ),
           ],
         ),
       ),
+      ),
+    );
+  }
+
+  /// Honest note replacing the previous non-functional notification toggles.
+  Widget _infoCard(SurfaceTokens t, String title, String body) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: t.card, border: Border.all(color: t.border), borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: AppColors.blue),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
+                const SizedBox(height: 4),
+                Text(body, style: TextStyle(fontSize: 11, color: t.muted, height: 1.5)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -152,26 +160,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           _switch(on, onChg),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(SurfaceTokens t, String label, String desc, Widget trailing) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: t.fg)),
-                Text(desc, style: TextStyle(fontSize: 11, color: t.muted)),
-              ],
-            ),
-          ),
-          trailing,
         ],
       ),
     );
@@ -224,29 +212,4 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _dropdown(SurfaceTokens t, List<String> items) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: t.mutedBg,
-        border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: items.first,
-          dropdownColor: t.card,
-          items: items
-              .map((s) => DropdownMenuItem(
-                    value: s,
-                    child: Text(s, style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter')),
-                  ))
-              .toList(),
-          onChanged: (_) {},
-          style: TextStyle(fontSize: 13, color: t.fg, fontFamily: 'Inter'),
-          icon: Icon(Icons.expand_more, size: 16, color: t.muted),
-        ),
-      ),
-    );
-  }
 }

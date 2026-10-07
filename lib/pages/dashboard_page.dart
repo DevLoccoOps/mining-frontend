@@ -171,9 +171,8 @@ class _DashboardPageState extends State<DashboardPage> {
       // ── Live gateway liveness (seen = forwarded telemetry in last 5 min) ──
       KpiCard(icon: Icons.wifi, label: 'Gateways Active', value: '$onlineGw', sub: '${state.gateways.length} seen', color: KpiColor.green),
       KpiCard(icon: Icons.wifi_off, label: 'Gateways Quiet', value: '${state.gateways.length - onlineGw}', sub: 'no telemetry in 5 min', color: state.gateways.length - onlineGw > 0 ? KpiColor.red : KpiColor.green),
-      // ── Not tracked by the backend ──
-      KpiCard(icon: Icons.calendar_month_outlined, label: 'Current Shift', value: 'Day', sub: '06:00 – 18:00', color: KpiColor.blue),
-      KpiCard(icon: Icons.flash_on, label: 'Equipment Tracking', value: '7', sub: 'Active units', color: KpiColor.purple),
+      // ── Personnel registry (real /api/personnel data) ──
+      KpiCard(icon: Icons.badge_outlined, label: 'Personnel Registered', value: '${live.personnel.length}', sub: 'in the registry', color: KpiColor.purple),
     ];
   }
 
@@ -220,9 +219,6 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: t.fg)),
                 const SizedBox(width: 8),
                 _liveBadge(live.status),
-                const Spacer(),
-                IconButton(icon: Icon(Icons.layers, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Map layers'),
-                IconButton(icon: Icon(Icons.refresh, size: 14, color: t.muted), onPressed: () {}, tooltip: 'Refresh map'),
               ],
             ),
           ),
